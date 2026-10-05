@@ -190,12 +190,7 @@ fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(",");
 
-        println!(
-            "  {}..{} -> [{}]",
-            block.start,
-            block.end,
-            successors
-        );
+        println!("  {}..{} -> [{}]", block.start, block.end, successors);
     }
 
     Ok(())
