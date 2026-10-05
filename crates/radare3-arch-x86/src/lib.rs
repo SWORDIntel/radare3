@@ -58,8 +58,8 @@ fn map_flow(flow: FlowControl) -> FlowKind {
         FlowControl::UnconditionalBranch | FlowControl::IndirectBranch => FlowKind::Branch,
         FlowControl::ConditionalBranch => FlowKind::ConditionalBranch,
         FlowControl::Call | FlowControl::IndirectCall => FlowKind::Call,
-        FlowControl::Return | FlowControl::SystemReturn => FlowKind::Return,
-        FlowControl::Interrupt | FlowControl::Exception | FlowControl::SystemCall => FlowKind::Trap,
+        FlowControl::Return => FlowKind::Return,
+        FlowControl::Interrupt | FlowControl::Exception => FlowKind::Trap,
         _ => FlowKind::Unknown,
     }
 }
