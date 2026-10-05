@@ -8,16 +8,22 @@ radare3 is an experimental high-performance binary-analysis engine focused on th
 
 ## Status
 
-The first real execution path is live:
+The first complete static-analysis slice is live:
 
 - ELF64 normalization
 - PE32+ normalization
 - x86/x86-64 decoding through an isolated iced-x86 backend
 - virtual-address to file-offset mapping
+- deterministic recursive-descent function discovery
+- basic-block and CFG recovery
+- call-derived function seeds
+- call/code xrefs
 - CLI binary inspection
 - CLI single-instruction decode
+- `afl`-style function listing
+- `agf`-style CFG listing
 
-Still intentionally missing: recursive function discovery, CFG construction, xrefs, caching, and radare2 command compatibility.
+Still intentionally missing: symbol/export function seeds, strings, persistent caching, parallel discovery, and radare2 command fallback.
 
 ## Quick start
 
@@ -25,9 +31,24 @@ Still intentionally missing: recursive function discovery, CFG construction, xre
 cargo build --workspace
 cargo run -p radare3-cli -- info /bin/ls
 cargo run -p radare3-cli -- decode /bin/ls 0xADDRESS
+cargo run -p radare3-cli -- afl /bin/ls
+cargo run -p radare3-cli -- agf /bin/ls
 ```
 
-The decode command currently accepts x86-64 images only.
+Analysis currently accepts x86-64 images only.
+
+## Analysis model
+
+The current analyzer is deliberately deterministic before it is parallel:
+
+1. seed the image entry point,
+2. recursively decode basic blocks,
+3. enqueue direct branch targets,
+4. promote direct call targets to function seeds,
+5. collect call/code xrefs,
+6. assign function, block, and xref IDs from sorted addresses.
+
+That gives the future parallel engine a canonical result to match.
 
 ## Workspace
 
@@ -43,7 +64,7 @@ crates/
   radare3-xref/       code/data/call reference model
   radare3-search/     binary search contract
   radare3-cache/      persistent cache contract
-  radare3-analysis/   analysis orchestration and result model
+  radare3-analysis/   deterministic analysis orchestration
   radare3-r2/         radare2 compatibility boundary
   radare3-cli/        command-line frontend
 ```
