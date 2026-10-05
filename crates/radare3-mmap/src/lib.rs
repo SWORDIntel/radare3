@@ -40,10 +40,7 @@ mod tests {
 
     #[test]
     fn maps_regular_file_without_copying() -> io::Result<()> {
-        let path = std::env::temp_dir().join(format!(
-            "radare3-mmap-{}.bin",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("radare3-mmap-{}.bin", std::process::id()));
         fs::write(&path, b"radare3")?;
 
         let data = map_file(&path)?;
