@@ -109,10 +109,7 @@ fn extract_utf16le(
         let start = index;
         let mut value = String::new();
 
-        while index + 1 < bytes.len()
-            && is_printable_ascii(bytes[index])
-            && bytes[index + 1] == 0
-        {
+        while index + 1 < bytes.len() && is_printable_ascii(bytes[index]) && bytes[index + 1] == 0 {
             value.push(char::from(bytes[index]));
             index += 2;
         }
