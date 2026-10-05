@@ -541,14 +541,16 @@ fn finalize(
             })
             .ok_or(AnalysisError::InternalInvariant)?;
 
-        if let Some(split) = block_starts
-            .range((Excluded(start), Excluded(block.end)))
-            .next()
-            .copied()
-        {
-            block.end = split;
-            block.successors.clear();
-            block.successors.insert(split);
+        if block.end > start {
+            if let Some(split) = block_starts
+                .range((Excluded(start), Excluded(block.end)))
+                .next()
+                .copied()
+            {
+                block.end = split;
+                block.successors.clear();
+                block.successors.insert(split);
+            }
         }
 
         canonical_blocks.insert(start, block);
