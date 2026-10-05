@@ -77,7 +77,10 @@ fn info(path: &str) -> Result<(), String> {
 
     println!("format: {:?}", image.format);
     println!("architecture: {:?}", image.architecture);
-    println!("storage: {}", if image.is_mapped() { "mmap" } else { "owned" });
+    println!(
+        "storage: {}",
+        if image.is_mapped() { "mmap" } else { "owned" }
+    );
     println!("base: {}", image.base_address);
     match image.entry_point {
         Some(entry) => println!("entry: {entry}"),
