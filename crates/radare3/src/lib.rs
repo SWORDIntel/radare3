@@ -2,6 +2,7 @@
 
 pub use radare3_analysis as analysis;
 pub use radare3_arch as arch;
+pub use radare3_arch_x86 as arch_x86;
 pub use radare3_cache as cache;
 pub use radare3_cfg as cfg;
 pub use radare3_image as image;

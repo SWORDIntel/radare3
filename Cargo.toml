@@ -5,6 +5,7 @@ members = [
     "crates/radare3-types",
     "crates/radare3-image",
     "crates/radare3-arch",
+    "crates/radare3-arch-x86",
     "crates/radare3-loader",
     "crates/radare3-cfg",
     "crates/radare3-xref",
@@ -22,10 +23,14 @@ version = "0.0.1"
 rust-version = "1.85"
 
 [workspace.dependencies]
+goblin = "0.10.7"
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"] }
+
 radare3 = { path = "crates/radare3" }
 radare3-types = { path = "crates/radare3-types" }
 radare3-image = { path = "crates/radare3-image" }
 radare3-arch = { path = "crates/radare3-arch" }
+radare3-arch-x86 = { path = "crates/radare3-arch-x86" }
 radare3-loader = { path = "crates/radare3-loader" }
 radare3-cfg = { path = "crates/radare3-cfg" }
 radare3-xref = { path = "crates/radare3-xref" }

@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 radare3-analysis.workspace = true
 radare3-arch.workspace = true
+radare3-arch-x86.workspace = true
 radare3-cache.workspace = true
 radare3-cfg.workspace = true
 radare3-image.workspace = true
