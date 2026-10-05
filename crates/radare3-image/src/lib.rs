@@ -120,6 +120,9 @@ mod tests {
 
         assert_eq!(image.address_to_file_offset(Address(0x1003)), Some(7));
         assert_eq!(image.address_to_file_offset(Address(0x1008)), None);
-        assert_eq!(image.bytes_at(Address(0x1006), 15).map(<[u8]>::len), Some(2));
+        assert_eq!(
+            image.bytes_at(Address(0x1006), 15).map(<[u8]>::len),
+            Some(2)
+        );
     }
 }
