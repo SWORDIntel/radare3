@@ -13,6 +13,7 @@ The current static-analysis slice includes:
 - ELF64 normalization
 - PE32+ normalization
 - x86/x86-64 decoding through an isolated iced-x86 backend
+- read-only mmap-backed input
 - virtual-address / file-offset mapping
 - typed function seeds:
   - image entry point
@@ -20,14 +21,18 @@ The current static-analysis slice includes:
   - PE exports
   - PE x64 exception table (`.pdata`)
 - deterministic recursive-descent function discovery
+- function-level parallel discovery using Rayon work stealing
+- reusable dense worker-local visited maps with a sparse fallback for large images
+- deterministic canonical CFG merge after parallel discovery
+- exact sequential/parallel differential fixtures
 - basic-block and CFG recovery
 - call-derived function seeds
 - call/code xrefs
 - ASCII and UTF-16LE string extraction
-- `afl`, `agf`, and `izz`-style CLI paths
-- first radare3-vs-radare2 benchmark harness
+- `afl`, `afl-seq`, `agf`, and `izz`-style CLI paths
+- radare3-vs-radare2 benchmark harness
 
-Still intentionally missing: persistent caching, parallel discovery, SIMD search, broad r2 command fallback, and ARM64 analysis.
+Still intentionally missing: persistent caching, SIMD search, broad r2 command fallback, and ARM64 analysis.
 
 ## Quick start
 
@@ -36,24 +41,30 @@ cargo build --workspace
 cargo run -p radare3-cli -- info /bin/ls
 cargo run -p radare3-cli -- decode /bin/ls 0xADDRESS
 cargo run -p radare3-cli -- afl /bin/ls
+cargo run -p radare3-cli -- afl-seq /bin/ls
 cargo run -p radare3-cli -- agf /bin/ls
 cargo run -p radare3-cli -- izz /bin/ls
 ```
+
+`afl` uses the parallel analyzer. `afl-seq` keeps the deterministic single-threaded analyzer available as a truth/performance oracle. Set `RAYON_NUM_THREADS` to pin the parallel worker count.
 
 Analysis currently accepts x86-64 images only. String extraction is architecture-independent.
 
 ## Analysis model
 
-The current analyzer remains deterministic before it becomes parallel:
+The fast path is parallel without making output order depend on scheduling:
 
 1. collect trusted loader seeds,
-2. recursively decode basic blocks,
-3. enqueue direct branch targets,
-4. promote direct call targets to function seeds,
-5. collect call/code xrefs,
-6. assign function, block, and xref IDs from sorted addresses.
+2. process function seeds in deterministic waves,
+3. let worker tasks recursively discover local blocks, callees, and xrefs,
+4. merge worker discoveries only after the wave completes,
+5. canonicalize overlapping provisional blocks using the global block-start set,
+6. rebuild per-function block membership from canonical CFG reachability,
+7. assign function, block, and xref IDs from sorted addresses.
 
-Named ELF symbols and PE exports are retained as function names. PE x64 `.pdata` records provide unnamed function seeds.
+The sequential analyzer uses the same discovery/canonicalization logic and is tested for exact equality with the parallel result.
+
+The mmap call is the only intentionally unsafe operation in this path and lives in the narrow `radare3-mmap` boundary crate. Core crates continue to forbid unsafe Rust.
 
 ## Benchmarking
 
@@ -63,9 +74,19 @@ With radare2 installed:
 ./scripts/bench-analysis.sh /bin/ls /bin/bash
 ```
 
-If `hyperfine` is installed, the script performs repeated warm benchmark runs. Otherwise it falls back to `/usr/bin/time`.
+The harness checks radare3 parallel/sequential function counts before timing. With `hyperfine`, it benchmarks:
 
-Function counts are printed alongside timings as a correctness signal. They are **not expected to match yet**, and no speedup claim should be made until output coverage is comparable.
+- radare3 parallel
+- radare3 sequential
+- radare2 `aaa;afl`
+
+For a fixed worker count:
+
+```sh
+RAYON_NUM_THREADS=8 RUNS=20 ./scripts/bench-analysis.sh /bin/ls /bin/bash
+```
+
+radare2 output coverage is still a correctness signal rather than a parity claim. No headline speedup should be published until the compared workloads are materially equivalent.
 
 See [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 

@@ -13,6 +13,7 @@ radare3-cache.workspace = true
 radare3-cfg.workspace = true
 radare3-image.workspace = true
 radare3-loader.workspace = true
+radare3-mmap.workspace = true
 radare3-r2.workspace = true
 radare3-search.workspace = true
 radare3-types.workspace = true
