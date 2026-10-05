@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use iced_x86::{
-    Decoder as IcedDecoderCore, DecoderOptions, FlowControl, OpKind,
-};
+use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FlowControl, OpKind};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
