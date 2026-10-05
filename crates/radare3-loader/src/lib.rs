@@ -262,11 +262,7 @@ fn collect_pe_runtime_function_seeds(
                 continue;
             }
 
-            let Some(address) = pe
-                .image_base
-                .checked_add(u64::from(begin_rva))
-                .map(Address)
-            else {
+            let Some(address) = pe.image_base.checked_add(u64::from(begin_rva)).map(Address) else {
                 continue;
             };
 
