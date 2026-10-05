@@ -236,9 +236,8 @@ impl<D: Decoder> Analyzer for RecursiveAnalyzer<D> {
         }
 
         for (index, (entry, members)) in function_blocks.iter().enumerate() {
-            let id = FunctionId(
-                u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?,
-            );
+            let id =
+                FunctionId(u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?);
             let function_block_ids = members
                 .iter()
                 .filter_map(|address| block_ids.get(address).copied())
@@ -260,9 +259,7 @@ impl<D: Decoder> Analyzer for RecursiveAnalyzer<D> {
             .enumerate()
             .map(|(index, (from, to, kind))| {
                 Ok(Xref {
-                    id: XrefId(
-                        u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?,
-                    ),
+                    id: XrefId(u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?),
                     from,
                     to,
                     kind: kind.into(),
@@ -387,7 +384,12 @@ mod tests {
         assert_eq!(first.cfg.blocks.len(), 4);
         assert_eq!(first.xrefs.len(), 2);
 
-        let entries: Vec<_> = first.cfg.functions.values().map(|function| function.entry).collect();
+        let entries: Vec<_> = first
+            .cfg
+            .functions
+            .values()
+            .map(|function| function.entry)
+            .collect();
         assert_eq!(entries, vec![Address(0x1000), Address(0x1010)]);
 
         let starts: Vec<_> = first.cfg.blocks.values().map(|block| block.start).collect();
