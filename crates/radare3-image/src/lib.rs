@@ -1,8 +1,53 @@
 #![forbid(unsafe_code)]
 
+use std::fmt;
 use std::sync::Arc;
 
 use radare3_types::{Address, Architecture, BinaryFormat};
+
+#[derive(Clone)]
+pub enum BinaryData {
+    Owned(Arc<[u8]>),
+    Mapped(Arc<memmap2::Mmap>),
+}
+
+impl BinaryData {
+    pub fn owned(bytes: Arc<[u8]>) -> Self {
+        Self::Owned(bytes)
+    }
+
+    pub fn mapped(bytes: Arc<memmap2::Mmap>) -> Self {
+        Self::Mapped(bytes)
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped(bytes) => bytes,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    pub fn is_mapped(&self) -> bool {
+        matches!(self, Self::Mapped(_))
+    }
+}
+
+impl fmt::Debug for BinaryData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BinaryData")
+            .field("len", &self.len())
+            .field("mapped", &self.is_mapped())
+            .finish()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FunctionSeedKind {
@@ -54,7 +99,7 @@ impl Segment {
 
 #[derive(Clone, Debug)]
 pub struct BinaryImage {
-    bytes: Arc<[u8]>,
+    bytes: BinaryData,
     pub format: BinaryFormat,
     pub architecture: Architecture,
     pub base_address: Address,
@@ -66,6 +111,24 @@ pub struct BinaryImage {
 impl BinaryImage {
     pub fn new(
         bytes: Arc<[u8]>,
+        format: BinaryFormat,
+        architecture: Architecture,
+        base_address: Address,
+        entry_point: Option<Address>,
+        segments: Vec<Segment>,
+    ) -> Self {
+        Self::from_data(
+            BinaryData::owned(bytes),
+            format,
+            architecture,
+            base_address,
+            entry_point,
+            segments,
+        )
+    }
+
+    pub fn from_data(
+        bytes: BinaryData,
         format: BinaryFormat,
         architecture: Architecture,
         base_address: Address,
@@ -109,7 +172,11 @@ impl BinaryImage {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_slice()
+    }
+
+    pub fn is_mapped(&self) -> bool {
+        self.bytes.is_mapped()
     }
 
     pub fn address_to_file_offset(&self, address: Address) -> Option<usize> {
@@ -148,7 +215,7 @@ impl BinaryImage {
         let len = max_len.min(remaining);
         let end = offset.checked_add(len)?;
 
-        self.bytes.get(offset..end)
+        self.bytes().get(offset..end)
     }
 }
 
@@ -186,6 +253,7 @@ mod tests {
             image.bytes_at(Address(0x1006), 15).map(<[u8]>::len),
             Some(2)
         );
+        assert!(!image.is_mapped());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use goblin::elf::program_header::PT_LOAD;
 use goblin::elf::sym::{STT_FUNC, st_type};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
-use radare3_image::{BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment};
+use radare3_image::{BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment};
 use radare3_types::{Address, Architecture, BinaryFormat};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,26 +38,30 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 pub trait Loader: Send + Sync {
-    fn load(&self, bytes: Arc<[u8]>) -> Result<BinaryImage, LoadError>;
+    fn load_data(&self, bytes: BinaryData) -> Result<BinaryImage, LoadError>;
+
+    fn load(&self, bytes: Arc<[u8]>) -> Result<BinaryImage, LoadError> {
+        self.load_data(BinaryData::owned(bytes))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GoblinLoader;
 
 impl Loader for GoblinLoader {
-    fn load(&self, bytes: Arc<[u8]>) -> Result<BinaryImage, LoadError> {
+    fn load_data(&self, bytes: BinaryData) -> Result<BinaryImage, LoadError> {
         let object =
-            Object::parse(&bytes).map_err(|error| LoadError::Malformed(error.to_string()))?;
+            Object::parse(bytes.as_slice()).map_err(|error| LoadError::Malformed(error.to_string()))?;
 
         match object {
-            Object::Elf(elf) => load_elf(Arc::clone(&bytes), &elf),
-            Object::PE(pe) => load_pe(Arc::clone(&bytes), &pe),
+            Object::Elf(elf) => load_elf(bytes.clone(), &elf),
+            Object::PE(pe) => load_pe(bytes.clone(), &pe),
             _ => Err(LoadError::UnsupportedFormat),
         }
     }
 }
 
-fn load_elf(bytes: Arc<[u8]>, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage, LoadError> {
+fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage, LoadError> {
     if !elf.is_64 {
         return Err(LoadError::UnsupportedClass);
     }
@@ -135,7 +139,7 @@ fn load_elf(bytes: Arc<[u8]>, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage,
         });
     }
 
-    Ok(BinaryImage::new(
+    Ok(BinaryImage::from_data(
         bytes,
         BinaryFormat::Elf,
         architecture,
@@ -146,7 +150,7 @@ fn load_elf(bytes: Arc<[u8]>, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage,
     .with_function_seeds(seeds))
 }
 
-fn load_pe(bytes: Arc<[u8]>, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, LoadError> {
+fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, LoadError> {
     if !pe.is_64 {
         return Err(LoadError::UnsupportedClass);
     }
@@ -219,10 +223,10 @@ fn load_pe(bytes: Arc<[u8]>, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Loa
     }
 
     if architecture == Architecture::X86_64 {
-        collect_pe_runtime_function_seeds(&bytes, pe, &mut seeds);
+        collect_pe_runtime_function_seeds(bytes.as_slice(), pe, &mut seeds);
     }
 
-    Ok(BinaryImage::new(
+    Ok(BinaryImage::from_data(
         bytes,
         BinaryFormat::Pe,
         architecture,

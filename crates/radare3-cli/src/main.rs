@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
-
-use radare3::analysis::{AnalysisOptions, Analyzer, RecursiveAnalyzer};
+use radare3::analysis::{AnalysisOptions, Analyzer, ParallelAnalyzer, RecursiveAnalyzer};
 use radare3::arch::Decoder;
 use radare3::arch_x86::IcedX86Decoder;
 use radare3::loader::{GoblinLoader, Loader};
@@ -31,8 +29,12 @@ fn main() {
             _ => Err("decode requires a file path and virtual address".to_string()),
         },
         Some("afl" | "analyze") => match args.next() {
-            Some(path) => afl(&path),
+            Some(path) => afl(&path, false),
             None => Err("afl requires a file path".to_string()),
+        },
+        Some("afl-seq" | "analyze-seq") => match args.next() {
+            Some(path) => afl(&path, true),
+            None => Err("afl-seq requires a file path".to_string()),
         },
         Some("agf") => match args.next() {
             Some(path) => agf(&path, args.next().as_deref()),
@@ -53,15 +55,16 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
 
 fn load(path: &str) -> Result<radare3::image::BinaryImage, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    let bytes =
+        radare3::mmap::map_file(path).map_err(|error| format!("failed to map {path}: {error}"))?;
     GoblinLoader
-        .load(Arc::from(bytes))
+        .load_data(bytes)
         .map_err(|error| error.to_string())
 }
 
@@ -70,6 +73,7 @@ fn info(path: &str) -> Result<(), String> {
 
     println!("format: {:?}", image.format);
     println!("architecture: {:?}", image.architecture);
+    println!("storage: {}", if image.is_mapped() { "mmap" } else { "owned" });
     println!("base: {}", image.base_address);
     match image.entry_point {
         Some(entry) => println!("entry: {entry}"),
@@ -121,17 +125,30 @@ fn decode(path: &str, address: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn analyze(path: &str) -> Result<radare3::analysis::AnalysisResult, String> {
-    let image = load(path)?;
-    ensure_x86_64(&image)?;
-
-    RecursiveAnalyzer::new(IcedX86Decoder::x86_64())
-        .analyze(&image, &AnalysisOptions::default())
+fn analyze_parallel(
+    image: &radare3::image::BinaryImage,
+) -> Result<radare3::analysis::AnalysisResult, String> {
+    ParallelAnalyzer::new(IcedX86Decoder::x86_64())
+        .analyze(image, &AnalysisOptions::default())
         .map_err(|error| format!("analysis failed: {error:?}"))
 }
 
-fn afl(path: &str) -> Result<(), String> {
-    let result = analyze(path)?;
+fn analyze_sequential(
+    image: &radare3::image::BinaryImage,
+) -> Result<radare3::analysis::AnalysisResult, String> {
+    RecursiveAnalyzer::new(IcedX86Decoder::x86_64())
+        .analyze(image, &AnalysisOptions::default())
+        .map_err(|error| format!("analysis failed: {error:?}"))
+}
+
+fn afl(path: &str, sequential: bool) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = if sequential {
+        analyze_sequential(&image)?
+    } else {
+        analyze_parallel(&image)?
+    };
 
     for function in result.cfg.functions.values() {
         println!(
@@ -143,7 +160,8 @@ fn afl(path: &str) -> Result<(), String> {
     }
 
     eprintln!(
-        "fidelity={:?} functions={} blocks={} xrefs={}",
+        "mode={} fidelity={:?} functions={} blocks={} xrefs={}",
+        if sequential { "sequential" } else { "parallel" },
         result.fidelity,
         result.cfg.functions.len(),
         result.cfg.blocks.len(),
@@ -156,9 +174,7 @@ fn afl(path: &str) -> Result<(), String> {
 fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {
     let image = load(path)?;
     ensure_x86_64(&image)?;
-    let result = RecursiveAnalyzer::new(IcedX86Decoder::x86_64())
-        .analyze(&image, &AnalysisOptions::default())
-        .map_err(|error| format!("analysis failed: {error:?}"))?;
+    let result = analyze_parallel(&image)?;
 
     let address = match requested {
         Some(value) => parse_address(value)?,
