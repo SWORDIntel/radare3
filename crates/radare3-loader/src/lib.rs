@@ -7,9 +7,7 @@ use goblin::Object;
 use goblin::elf::header::{EM_AARCH64, EM_X86_64};
 use goblin::elf::program_header::PT_LOAD;
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
-use goblin::pe::section_table::{
-    IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE,
-};
+use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
 use radare3_image::{BinaryImage, Permissions, Segment};
 use radare3_types::{Address, Architecture, BinaryFormat};
 
@@ -26,7 +24,9 @@ impl fmt::Display for LoadError {
         match self {
             Self::Malformed(message) => write!(f, "malformed binary: {message}"),
             Self::UnsupportedFormat => write!(f, "unsupported binary format"),
-            Self::UnsupportedClass => write!(f, "only 64-bit ELF and PE32+ are currently supported"),
+            Self::UnsupportedClass => {
+                write!(f, "only 64-bit ELF and PE32+ are currently supported")
+            }
             Self::UnsupportedArchitecture(machine) => {
                 write!(f, "unsupported machine type: 0x{machine:04x}")
             }
