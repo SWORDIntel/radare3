@@ -29,9 +29,5 @@ pub enum DecodeError {
 }
 
 pub trait Decoder: Send + Sync {
-    fn decode(
-        &self,
-        address: Address,
-        bytes: &[u8],
-    ) -> Result<DecodedInstruction, DecodeError>;
+    fn decode(&self, address: Address, bytes: &[u8]) -> Result<DecodedInstruction, DecodeError>;
 }
