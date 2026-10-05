@@ -148,7 +148,7 @@ enum VisitedBlocks {
 impl VisitedBlocks {
     fn new(index: &ExecutableAddressIndex) -> Self {
         if index.dense_enabled {
-            let word_count = index.total_bytes.saturating_add(63) / 64;
+            let word_count = index.total_bytes.div_ceil(64);
             Self::Dense {
                 words: vec![0; word_count],
                 touched_words: Vec::new(),
