@@ -29,13 +29,17 @@
 ## Phase 2 — Performance
 
 - [x] first radare3-vs-radare2 benchmark harness
-- [ ] immutable mmap-backed image storage
-- [ ] per-worker discovery arenas
-- [ ] work-stealing scheduler
-- [ ] dense visited-address structures
+- [x] immutable mmap-backed image storage
+- [x] isolated mmap unsafe boundary
+- [x] reusable per-worker discovery arenas
+- [x] Rayon work-stealing scheduler
+- [x] deterministic wave merge
+- [x] dense visited-address structures with sparse fallback
+- [x] sequential-vs-parallel differential gate
 - [ ] SIMD literal/string search
 - [ ] reproducible benchmark corpus
 - [ ] benchmark result storage / regression gate
+- [ ] address lookup acceleration for very high segment-count images
 
 ## Phase 3 — Persistence and compatibility
 

@@ -4,7 +4,7 @@
 
 radare3 separates work into three operational planes:
 
-1. **Fast plane** — immutable image access, decoding, discovery, CFG/xref/search work.
+1. **Fast plane** — immutable image access, decoding, parallel discovery, CFG/xref/search work.
 2. **Truth plane** — deterministic canonicalization, validation, provenance, reproducible outputs.
 3. **Compatibility plane** — radare2 command/project interoperability and fallback.
 
@@ -13,6 +13,7 @@ radare3 separates work into three operational planes:
 ```text
 types
  ├── image
+ │    └── mmap boundary
  ├── arch
  ├── cfg
  ├── xref
@@ -34,11 +35,54 @@ Loaders normalize file formats into `BinaryImage`. They do not own analysis poli
 
 ### Immutable image
 
-After loading, the byte image and segment mapping are immutable. Analysis workers receive shared references and never mutate a process-global seek cursor.
+After loading, the byte image and segment mapping are immutable. The CLI maps regular files read-only and workers share the same backing bytes. Analysis never mutates a process-global seek cursor.
+
+The only mmap-specific unsafe operation is isolated in `radare3-mmap`. The core image/loader/analysis crates still forbid unsafe Rust.
 
 ### Local discovery, deterministic commit
 
-Parallel workers produce discovery records locally. Canonical functions, blocks, and references are resolved in a deterministic merge phase.
+Function workers do not mutate canonical CFG state. Each worker produces a local discovery record containing provisional blocks, direct callees, xrefs, fidelity, and instruction count.
+
+Parallel execution happens in waves:
+
+```text
+sorted pending function seeds
+          │
+          ▼
+    Rayon work stealing
+   ┌──────┼──────┐
+   ▼      ▼      ▼
+ worker worker worker
+   │      │      │
+   └── local discoveries ──┐
+                            ▼
+                 deterministic merge
+                            │
+                            ▼
+                    next callee wave
+```
+
+Scheduling order therefore cannot assign canonical IDs.
+
+### Canonical block merge
+
+Different function seeds can overlap the same instruction stream. Worker-local blocks are provisional.
+
+The truth plane:
+
+1. collects every provisional block start,
+2. chooses deterministic candidates for duplicate starts,
+3. splits a block if another globally known block start lies inside it,
+4. rebuilds each function's block membership by canonical CFG reachability,
+5. assigns IDs only after sorting canonical addresses.
+
+This is what lets sequential and parallel analysis use the same output contract.
+
+### Reusable visited-address maps
+
+Workers reuse a bitset indexed over executable file-backed bytes. Clearing is proportional to the words actually touched, not the entire image.
+
+For unusually large executable mappings, the arena switches to a sparse set rather than allocating an unbounded per-worker bitset.
 
 ### Stable identifiers
 
@@ -50,17 +94,20 @@ radare3 does not initially reimplement every radare2 feature. Unsupported comman
 
 ### No silent approximation
 
-If a future fast path produces incomplete or heuristic results, the result must carry an explicit fidelity/status marker rather than silently masquerading as canonical truth.
+If a fast path produces incomplete or heuristic results, the result carries an explicit fidelity/status marker rather than silently masquerading as canonical truth.
 
-## Initial implementation order
+## Current implementation order
 
-1. PE/ELF loader normalization.
-2. x86/x86-64 decoder backend.
-3. trusted function seed extraction.
-4. basic-block discovery.
-5. deterministic CFG merge.
-6. call/xref collection.
-7. string and literal search.
-8. persistent cache.
-9. radare2 import/export bridge.
-10. parallel scheduling and tuning after correctness fixtures are stable.
+1. PE/ELF loader normalization. ✓
+2. x86/x86-64 decoder backend. ✓
+3. trusted function seed extraction. ✓
+4. basic-block discovery. ✓
+5. deterministic CFG merge. ✓
+6. call/xref collection. ✓
+7. string extraction. ✓
+8. mmap-backed immutable storage. ✓
+9. parallel function discovery. ✓
+10. sequential/parallel differential validation. ✓
+11. SIMD search.
+12. persistent cache.
+13. radare2 import/export bridge.
