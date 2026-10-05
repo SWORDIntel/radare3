@@ -4,6 +4,21 @@ use std::sync::Arc;
 
 use radare3_types::{Address, Architecture, BinaryFormat};
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FunctionSeedKind {
+    Entry,
+    Symbol,
+    Export,
+    ExceptionTable,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FunctionSeed {
+    pub address: Address,
+    pub kind: FunctionSeedKind,
+    pub name: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Permissions {
     pub read: bool,
@@ -28,6 +43,13 @@ impl Segment {
         };
         address.0 >= self.address.0 && address.0 < end
     }
+
+    pub fn contains_file_offset(&self, file_offset: u64) -> bool {
+        let Some(end) = self.file_offset.checked_add(self.file_size) else {
+            return false;
+        };
+        file_offset >= self.file_offset && file_offset < end
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +60,7 @@ pub struct BinaryImage {
     pub base_address: Address,
     pub entry_point: Option<Address>,
     pub segments: Vec<Segment>,
+    pub function_seeds: Vec<FunctionSeed>,
 }
 
 impl BinaryImage {
@@ -49,6 +72,16 @@ impl BinaryImage {
         entry_point: Option<Address>,
         segments: Vec<Segment>,
     ) -> Self {
+        let function_seeds = entry_point
+            .map(|address| {
+                vec![FunctionSeed {
+                    address,
+                    kind: FunctionSeedKind::Entry,
+                    name: None,
+                }]
+            })
+            .unwrap_or_default();
+
         Self {
             bytes,
             format,
@@ -56,7 +89,23 @@ impl BinaryImage {
             base_address,
             entry_point,
             segments,
+            function_seeds,
         }
+    }
+
+    pub fn with_function_seeds(mut self, mut function_seeds: Vec<FunctionSeed>) -> Self {
+        self.function_seeds.append(&mut function_seeds);
+        self.function_seeds.sort();
+        self.function_seeds.dedup();
+        self
+    }
+
+    pub fn preferred_function_name(&self, address: Address) -> Option<&str> {
+        self.function_seeds
+            .iter()
+            .filter(|seed| seed.address == address)
+            .filter_map(|seed| seed.name.as_deref())
+            .find(|name| !name.is_empty())
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -72,6 +121,17 @@ impl BinaryImage {
             let delta = address.0.checked_sub(segment.address.0)?;
             let offset = segment.file_offset.checked_add(delta)?;
             usize::try_from(offset).ok()
+        })
+    }
+
+    pub fn file_offset_to_address(&self, file_offset: u64) -> Option<Address> {
+        self.segments.iter().find_map(|segment| {
+            if !segment.contains_file_offset(file_offset) {
+                return None;
+            }
+
+            let delta = file_offset.checked_sub(segment.file_offset)?;
+            segment.address.0.checked_add(delta).map(Address)
         })
     }
 
@@ -97,7 +157,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_virtual_address_to_file_offset() {
+    fn maps_virtual_addresses_and_file_offsets() {
         let image = BinaryImage::new(
             Arc::from([0_u8; 32]),
             BinaryFormat::Raw,
@@ -119,10 +179,39 @@ mod tests {
         );
 
         assert_eq!(image.address_to_file_offset(Address(0x1003)), Some(7));
+        assert_eq!(image.file_offset_to_address(7), Some(Address(0x1003)));
         assert_eq!(image.address_to_file_offset(Address(0x1008)), None);
+        assert_eq!(image.file_offset_to_address(12), None);
         assert_eq!(
             image.bytes_at(Address(0x1006), 15).map(<[u8]>::len),
             Some(2)
         );
+    }
+
+    #[test]
+    fn canonicalizes_and_names_function_seeds() {
+        let image = BinaryImage::new(
+            Arc::from([0xc3_u8]),
+            BinaryFormat::Raw,
+            Architecture::X86_64,
+            Address(0x1000),
+            Some(Address(0x1000)),
+            vec![],
+        )
+        .with_function_seeds(vec![
+            FunctionSeed {
+                address: Address(0x1000),
+                kind: FunctionSeedKind::Symbol,
+                name: Some("main".to_string()),
+            },
+            FunctionSeed {
+                address: Address(0x1000),
+                kind: FunctionSeedKind::Symbol,
+                name: Some("main".to_string()),
+            },
+        ]);
+
+        assert_eq!(image.function_seeds.len(), 2);
+        assert_eq!(image.preferred_function_name(Address(0x1000)), Some("main"));
     }
 }

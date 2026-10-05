@@ -73,8 +73,11 @@ impl<D: Decoder> Analyzer for RecursiveAnalyzer<D> {
     ) -> Result<AnalysisResult, AnalysisError> {
         let mut function_seeds = BTreeSet::new();
         if options.entrypoints.is_empty() {
-            if let Some(entry) = image.entry_point {
-                function_seeds.insert(entry);
+            function_seeds.extend(image.function_seeds.iter().map(|seed| seed.address));
+            if function_seeds.is_empty() {
+                if let Some(entry) = image.entry_point {
+                    function_seeds.insert(entry);
+                }
             }
         } else {
             function_seeds.extend(options.entrypoints.iter().copied());
@@ -249,7 +252,10 @@ impl<D: Decoder> Analyzer for RecursiveAnalyzer<D> {
                     id,
                     entry: *entry,
                     blocks: function_block_ids,
-                    name: Some(format!("sub_{:x}", entry.0)),
+                    name: image
+                        .preferred_function_name(*entry)
+                        .map(str::to_owned)
+                        .or_else(|| Some(format!("sub_{:x}", entry.0))),
                 },
             );
         }
@@ -301,7 +307,7 @@ fn is_executable_file_address(image: &BinaryImage, address: Address) -> bool {
 mod tests {
     use std::sync::Arc;
 
-    use radare3_image::{Permissions, Segment};
+    use radare3_image::{FunctionSeed, FunctionSeedKind, Permissions, Segment};
     use radare3_types::{Architecture, BinaryFormat};
 
     use super::*;
@@ -370,6 +376,11 @@ mod tests {
                 },
             }],
         )
+        .with_function_seeds(vec![FunctionSeed {
+            address: Address(0x1010),
+            kind: FunctionSeedKind::Symbol,
+            name: Some("helper".to_string()),
+        }])
     }
 
     #[test]
@@ -391,6 +402,14 @@ mod tests {
             .map(|function| function.entry)
             .collect();
         assert_eq!(entries, vec![Address(0x1000), Address(0x1010)]);
+
+        let helper = first
+            .cfg
+            .functions
+            .values()
+            .find(|function| function.entry == Address(0x1010))
+            .ok_or(AnalysisError::InternalInvariant)?;
+        assert_eq!(helper.name.as_deref(), Some("helper"));
 
         let starts: Vec<_> = first.cfg.blocks.values().map(|block| block.start).collect();
         assert_eq!(

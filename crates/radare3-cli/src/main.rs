@@ -6,6 +6,7 @@ use radare3::analysis::{AnalysisOptions, Analyzer, RecursiveAnalyzer};
 use radare3::arch::Decoder;
 use radare3::arch_x86::IcedX86Decoder;
 use radare3::loader::{GoblinLoader, Loader};
+use radare3::search::{StringEncoding, extract_strings};
 use radare3::types::{Address, Architecture};
 
 fn main() {
@@ -37,6 +38,10 @@ fn main() {
             Some(path) => agf(&path, args.next().as_deref()),
             None => Err("agf requires a file path".to_string()),
         },
+        Some("izz") => match args.next() {
+            Some(path) => izz(&path, args.next().as_deref()),
+            None => Err("izz requires a file path".to_string()),
+        },
         Some(other) => Err(format!("unsupported command: {other}")),
     };
 
@@ -48,7 +53,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 agf <file> [function-address]\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -71,6 +76,7 @@ fn info(path: &str) -> Result<(), String> {
         None => println!("entry: none"),
     }
     println!("segments: {}", image.segments.len());
+    println!("function-seeds: {}", image.function_seeds.len());
 
     for segment in &image.segments {
         println!(
@@ -191,6 +197,25 @@ fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {
             .join(",");
 
         println!("  {}..{} -> [{}]", block.start, block.end, successors);
+    }
+
+    Ok(())
+}
+
+fn izz(path: &str, minimum: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    let min_chars = minimum
+        .map(str::parse::<usize>)
+        .transpose()
+        .map_err(|error| format!("invalid minimum string length: {error}"))?
+        .unwrap_or(4);
+
+    for string in extract_strings(&image, min_chars) {
+        let encoding = match string.encoding {
+            StringEncoding::Ascii => "ascii",
+            StringEncoding::Utf16Le => "utf16le",
+        };
+        println!("{} {} {}", string.address, encoding, string.value);
     }
 
     Ok(())
