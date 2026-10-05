@@ -14,13 +14,15 @@
 - [x] ELF64 loader normalization
 - [x] PE32+ loader normalization
 - [x] x86/x86-64 decoder backend
-- [ ] trusted function seeds
-- [ ] basic-block discovery
-- [ ] deterministic CFG assembly
-- [ ] call/xref extraction
+- [x] entrypoint function seed
+- [x] call-derived function seeds
+- [x] basic-block discovery
+- [x] deterministic CFG assembly
+- [x] call/xref extraction
 - [ ] strings
 - [x] CLI binary info and single-instruction decode
-- [ ] CLI function-list commands
+- [x] CLI `afl` and `agf`-style commands
+- [ ] symbol/export-derived function seeds
 
 ## Phase 2 — Performance
 
