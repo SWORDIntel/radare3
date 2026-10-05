@@ -283,7 +283,11 @@ mod tests {
         assert_eq!(image.base_address, Address(0x140000000));
         assert_eq!(image.entry_point, Some(Address(0x140001000)));
         assert_eq!(image.segments.len(), 1);
-        assert_eq!(image.bytes_at(Address(0x140001000), 15), Some(&[0xc3][..]));
+        let code = image
+            .bytes_at(Address(0x140001000), 15)
+            .ok_or("expected file-backed PE entry point")?;
+        assert_eq!(code.len(), 15);
+        assert_eq!(code[0], 0xc3);
 
         Ok(())
     }
