@@ -44,6 +44,10 @@ fn main() {
             Some(path) => izz(&path, args.next().as_deref()),
             None => Err("izz requires a file path".to_string()),
         },
+        Some("verify") => match args.next() {
+            Some(path) => verify(&path),
+            None => Err("verify requires a file path".to_string()),
+        },
         Some(other) => Err(format!("unsupported command: {other}")),
     };
 
@@ -55,7 +59,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -214,6 +218,36 @@ fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {
 
         println!("  {}..{} -> [{}]", block.start, block.end, successors);
     }
+
+    Ok(())
+}
+
+fn verify(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+
+    let sequential = analyze_sequential(&image)?;
+    let parallel = analyze_parallel(&image)?;
+
+    if sequential != parallel {
+        return Err(format!(
+            "parallel analysis diverged from sequential truth oracle: seq(f={},b={},x={}) par(f={},b={},x={})",
+            sequential.cfg.functions.len(),
+            sequential.cfg.blocks.len(),
+            sequential.xrefs.len(),
+            parallel.cfg.functions.len(),
+            parallel.cfg.blocks.len(),
+            parallel.xrefs.len()
+        ));
+    }
+
+    println!(
+        "verified functions={} blocks={} xrefs={} fidelity={:?}",
+        parallel.cfg.functions.len(),
+        parallel.cfg.blocks.len(),
+        parallel.xrefs.len(),
+        parallel.fidelity
+    );
 
     Ok(())
 }
