@@ -6,9 +6,10 @@ use std::sync::Arc;
 use goblin::Object;
 use goblin::elf::header::{EM_AARCH64, EM_X86_64};
 use goblin::elf::program_header::PT_LOAD;
+use goblin::elf::sym::{STT_FUNC, st_type};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
-use radare3_image::{BinaryImage, Permissions, Segment};
+use radare3_image::{BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment};
 use radare3_types::{Address, Architecture, BinaryFormat};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,6 +101,39 @@ fn load_elf(bytes: Arc<[u8]>, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage,
         .unwrap_or(Address(0));
 
     let entry_point = (elf.entry != 0).then_some(Address(elf.entry));
+    let mut seeds = Vec::new();
+
+    for symbol in elf.syms.iter() {
+        if st_type(symbol.st_info) != STT_FUNC || symbol.st_value == 0 {
+            continue;
+        }
+
+        seeds.push(FunctionSeed {
+            address: Address(symbol.st_value),
+            kind: FunctionSeedKind::Symbol,
+            name: elf
+                .strtab
+                .get_at(symbol.st_name)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned),
+        });
+    }
+
+    for symbol in elf.dynsyms.iter() {
+        if st_type(symbol.st_info) != STT_FUNC || symbol.st_value == 0 {
+            continue;
+        }
+
+        seeds.push(FunctionSeed {
+            address: Address(symbol.st_value),
+            kind: FunctionSeedKind::Symbol,
+            name: elf
+                .dynstrtab
+                .get_at(symbol.st_name)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned),
+        });
+    }
 
     Ok(BinaryImage::new(
         bytes,
@@ -108,7 +142,8 @@ fn load_elf(bytes: Arc<[u8]>, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage,
         base_address,
         entry_point,
         segments,
-    ))
+    )
+    .with_function_seeds(seeds))
 }
 
 fn load_pe(bytes: Arc<[u8]>, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, LoadError> {
@@ -162,6 +197,31 @@ fn load_pe(bytes: Arc<[u8]>, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Loa
         .flatten()
         .map(Address);
 
+    let mut seeds = Vec::new();
+
+    for export in &pe.exports {
+        if export.reexport.is_some() || export.rva == 0 {
+            continue;
+        }
+
+        let Ok(rva) = u64::try_from(export.rva) else {
+            continue;
+        };
+        let Some(address) = pe.image_base.checked_add(rva).map(Address) else {
+            continue;
+        };
+
+        seeds.push(FunctionSeed {
+            address,
+            kind: FunctionSeedKind::Export,
+            name: export.name.map(str::to_owned),
+        });
+    }
+
+    if architecture == Architecture::X86_64 {
+        collect_pe_runtime_function_seeds(&bytes, pe, &mut seeds);
+    }
+
     Ok(BinaryImage::new(
         bytes,
         BinaryFormat::Pe,
@@ -169,7 +229,50 @@ fn load_pe(bytes: Arc<[u8]>, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Loa
         Address(pe.image_base),
         entry_point,
         segments,
-    ))
+    )
+    .with_function_seeds(seeds))
+}
+
+fn collect_pe_runtime_function_seeds(
+    bytes: &[u8],
+    pe: &goblin::pe::PE<'_>,
+    seeds: &mut Vec<FunctionSeed>,
+) {
+    for section in &pe.sections {
+        if section.name().ok() != Some(".pdata") {
+            continue;
+        }
+
+        let Ok(start) = usize::try_from(section.pointer_to_raw_data) else {
+            continue;
+        };
+        let Ok(size) = usize::try_from(section.size_of_raw_data) else {
+            continue;
+        };
+        let Some(end) = start.checked_add(size) else {
+            continue;
+        };
+        let Some(data) = bytes.get(start..end) else {
+            continue;
+        };
+
+        for record in data.chunks_exact(12) {
+            let begin_rva = u32::from_le_bytes([record[0], record[1], record[2], record[3]]);
+            if begin_rva == 0 {
+                continue;
+            }
+
+            let Some(address) = pe.image_base.checked_add(u64::from(begin_rva)).map(Address) else {
+                continue;
+            };
+
+            seeds.push(FunctionSeed {
+                address,
+                kind: FunctionSeedKind::ExceptionTable,
+                name: None,
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +372,7 @@ mod tests {
         assert_eq!(image.base_address, Address(0x400000));
         assert_eq!(image.entry_point, Some(Address(0x400000)));
         assert_eq!(image.segments.len(), 1);
+        assert_eq!(image.function_seeds.len(), 1);
         assert_eq!(image.bytes_at(Address(0x400000), 15), Some(&[0xc3][..]));
 
         Ok(())
@@ -283,6 +387,7 @@ mod tests {
         assert_eq!(image.base_address, Address(0x140000000));
         assert_eq!(image.entry_point, Some(Address(0x140001000)));
         assert_eq!(image.segments.len(), 1);
+        assert_eq!(image.function_seeds.len(), 1);
         let code = image
             .bytes_at(Address(0x140001000), 15)
             .ok_or("expected file-backed PE entry point")?;

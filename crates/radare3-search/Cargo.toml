@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+radare3-image.workspace = true
 radare3-types.workspace = true
 
 [lints]
