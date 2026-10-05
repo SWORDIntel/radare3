@@ -9,7 +9,9 @@ use goblin::elf::program_header::PT_LOAD;
 use goblin::elf::sym::{STT_FUNC, st_type};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
-use radare3_image::{BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment};
+use radare3_image::{
+    BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment,
+};
 use radare3_types::{Address, Architecture, BinaryFormat};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,8 +52,8 @@ pub struct GoblinLoader;
 
 impl Loader for GoblinLoader {
     fn load_data(&self, bytes: BinaryData) -> Result<BinaryImage, LoadError> {
-        let object =
-            Object::parse(bytes.as_slice()).map_err(|error| LoadError::Malformed(error.to_string()))?;
+        let object = Object::parse(bytes.as_slice())
+            .map_err(|error| LoadError::Malformed(error.to_string()))?;
 
         match object {
             Object::Elf(elf) => load_elf(bytes.clone(), &elf),
