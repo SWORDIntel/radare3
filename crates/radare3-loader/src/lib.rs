@@ -49,8 +49,8 @@ impl Loader for GoblinLoader {
             Object::parse(&bytes).map_err(|error| LoadError::Malformed(error.to_string()))?;
 
         match object {
-            Object::Elf(elf) => load_elf(bytes, &elf),
-            Object::PE(pe) => load_pe(bytes, &pe),
+            Object::Elf(elf) => load_elf(Arc::clone(&bytes), &elf),
+            Object::PE(pe) => load_pe(Arc::clone(&bytes), &pe),
             _ => Err(LoadError::UnsupportedFormat),
         }
     }
