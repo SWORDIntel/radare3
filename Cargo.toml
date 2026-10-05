@@ -1,7 +1,48 @@
 [workspace]
 resolver = "2"
-members = []
+members = [
+    "crates/radare3",
+    "crates/radare3-types",
+    "crates/radare3-image",
+    "crates/radare3-arch",
+    "crates/radare3-loader",
+    "crates/radare3-cfg",
+    "crates/radare3-xref",
+    "crates/radare3-search",
+    "crates/radare3-cache",
+    "crates/radare3-analysis",
+    "crates/radare3-r2",
+    "crates/radare3-cli",
+]
 
 [workspace.package]
 edition = "2024"
 license = "AGPL-3.0-or-later"
+version = "0.0.1"
+rust-version = "1.85"
+
+[workspace.dependencies]
+radare3 = { path = "crates/radare3" }
+radare3-types = { path = "crates/radare3-types" }
+radare3-image = { path = "crates/radare3-image" }
+radare3-arch = { path = "crates/radare3-arch" }
+radare3-loader = { path = "crates/radare3-loader" }
+radare3-cfg = { path = "crates/radare3-cfg" }
+radare3-xref = { path = "crates/radare3-xref" }
+radare3-search = { path = "crates/radare3-search" }
+radare3-cache = { path = "crates/radare3-cache" }
+radare3-analysis = { path = "crates/radare3-analysis" }
+radare3-r2 = { path = "crates/radare3-r2" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

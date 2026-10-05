@@ -1,0 +1,16 @@
+[package]
+name = "radare3-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "radare3"
+path = "src/main.rs"
+
+[dependencies]
+radare3.workspace = true
+
+[lints]
+workspace = true
