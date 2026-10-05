@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn extracts_ascii_and_utf16le_strings() {
-        let mut bytes = b"\0HELLO\0xx\0".to_vec();
+        let mut bytes = b"\0HELLO\0xx\0\0".to_vec();
         bytes.extend_from_slice(b"W\0O\0R\0L\0D\0\0\0");
 
         let strings = extract_strings(&image(bytes), 4);
