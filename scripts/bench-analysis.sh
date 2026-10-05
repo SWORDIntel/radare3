@@ -30,6 +30,9 @@ for target in "${targets[@]}"; do
   echo
   echo "== $target =="
 
+  "$r3" verify "$target" >/dev/null
+  echo "structural verification: PASS"
+
   parallel_count="$("$r3" afl "$target" 2>/dev/null | wc -l)"
   sequential_count="$("$r3" afl-seq "$target" 2>/dev/null | wc -l)"
   r2_count="$(r2 -2 -q -c 'aaa;afl;q' "$target" 2>/dev/null | wc -l)"
