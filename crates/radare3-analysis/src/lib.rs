@@ -591,8 +591,7 @@ fn finalize(
     }
 
     for (index, entry) in function_entries.into_iter().enumerate() {
-        let id =
-            FunctionId(u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?);
+        let id = FunctionId(u32::try_from(index).map_err(|_| AnalysisError::InternalInvariant)?);
         let reachable = reachable_blocks(entry, &canonical_blocks);
         let function_block_ids = reachable
             .iter()
@@ -633,10 +632,7 @@ fn finalize(
     })
 }
 
-fn reachable_blocks(
-    entry: Address,
-    blocks: &BTreeMap<Address, TempBlock>,
-) -> BTreeSet<Address> {
+fn reachable_blocks(entry: Address, blocks: &BTreeMap<Address, TempBlock>) -> BTreeSet<Address> {
     let mut reachable = BTreeSet::new();
     let mut pending = BTreeSet::from([entry]);
 
@@ -653,11 +649,7 @@ fn reachable_blocks(
     reachable
 }
 
-fn charge_budget(
-    total: &mut u64,
-    amount: u64,
-    limit: Option<u64>,
-) -> Result<(), AnalysisError> {
+fn charge_budget(total: &mut u64, amount: u64, limit: Option<u64>) -> Result<(), AnalysisError> {
     *total = total
         .checked_add(amount)
         .ok_or(AnalysisError::BudgetExceeded)?;
@@ -669,10 +661,7 @@ fn charge_budget(
     Ok(())
 }
 
-fn initial_function_seeds(
-    image: &BinaryImage,
-    options: &AnalysisOptions,
-) -> BTreeSet<Address> {
+fn initial_function_seeds(image: &BinaryImage, options: &AnalysisOptions) -> BTreeSet<Address> {
     if !options.entrypoints.is_empty() {
         return options.entrypoints.iter().copied().collect();
     }
@@ -823,7 +812,12 @@ mod tests {
             .ok_or(AnalysisError::InternalInvariant)?;
         assert_eq!(helper.name.as_deref(), Some("helper"));
 
-        let starts: Vec<_> = result.cfg.blocks.values().map(|block| block.start).collect();
+        let starts: Vec<_> = result
+            .cfg
+            .blocks
+            .values()
+            .map(|block| block.start)
+            .collect();
         assert_eq!(
             starts,
             vec![
