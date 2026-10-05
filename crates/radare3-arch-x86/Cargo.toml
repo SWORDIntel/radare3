@@ -1,13 +1,13 @@
 [package]
-name = "radare3-loader"
+name = "radare3-arch-x86"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-goblin.workspace = true
-radare3-image.workspace = true
+iced-x86.workspace = true
+radare3-arch.workspace = true
 radare3-types.workspace = true
 
 [lints]

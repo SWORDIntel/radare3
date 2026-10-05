@@ -8,23 +8,26 @@ radare3 is an experimental high-performance binary-analysis engine focused on th
 
 ## Status
 
-The repository is now a **compiling architecture scaffold**. Analysis algorithms are intentionally not implemented yet.
+The first real execution path is live:
 
-Initial scope:
+- ELF64 normalization
+- PE32+ normalization
+- x86/x86-64 decoding through an isolated iced-x86 backend
+- virtual-address to file-offset mapping
+- CLI binary inspection
+- CLI single-instruction decode
 
-- Rust-native core
-- ELF + PE first
-- x86 / x86-64 first
-- immutable binary images
-- parallel function and CFG discovery
-- deterministic canonical merge
-- fast xref and string indexing
-- SIMD-oriented search boundary
-- persistent content-addressed analysis cache
-- radare2 compatibility / fallback
-- optional Angryier handoff for deep symbolic and concolic analysis
+Still intentionally missing: recursive function discovery, CFG construction, xrefs, caching, and radare2 command compatibility.
 
-No performance claims until reproducible benchmarks exist.
+## Quick start
+
+```sh
+cargo build --workspace
+cargo run -p radare3-cli -- info /bin/ls
+cargo run -p radare3-cli -- decode /bin/ls 0xADDRESS
+```
+
+The decode command currently accepts x86-64 images only.
 
 ## Workspace
 
@@ -34,7 +37,8 @@ crates/
   radare3-types/      stable IDs and shared value types
   radare3-image/      immutable loaded-image model
   radare3-arch/       architecture-neutral decoder contract
-  radare3-loader/     loader contract and format normalization
+  radare3-arch-x86/   iced-x86 decoder backend
+  radare3-loader/     ELF64 / PE32+ normalization
   radare3-cfg/        functions, basic blocks, CFG representation
   radare3-xref/       code/data/call reference model
   radare3-search/     binary search contract
@@ -44,18 +48,12 @@ crates/
   radare3-cli/        command-line frontend
 ```
 
-## Build
+## Quality gates
 
 ```sh
-cargo build --workspace
-cargo test --workspace
+cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-```
-
-Run the placeholder CLI:
-
-```sh
-cargo run -p radare3-cli -- --version
+cargo test --workspace
 ```
 
 ## Architecture

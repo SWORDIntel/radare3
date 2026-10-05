@@ -11,15 +11,16 @@
 
 ## Phase 1 — First useful analyzer
 
-- [ ] ELF64 loader
-- [ ] PE32+ loader
-- [ ] x86-64 decoder backend
+- [x] ELF64 loader normalization
+- [x] PE32+ loader normalization
+- [x] x86/x86-64 decoder backend
 - [ ] trusted function seeds
 - [ ] basic-block discovery
 - [ ] deterministic CFG assembly
 - [ ] call/xref extraction
 - [ ] strings
-- [ ] CLI open / info / function-list commands
+- [x] CLI binary info and single-instruction decode
+- [ ] CLI function-list commands
 
 ## Phase 2 — Performance
 
