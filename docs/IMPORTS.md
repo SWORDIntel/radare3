@@ -58,3 +58,16 @@ import slot address -> position in BinaryImage.imports
 It stores only positions into the canonical import vector and is not persisted.
 
 If multiple canonical import records share a slot, the first record in canonical import order wins. This matches the existing `BinaryImage::import_at_slot` behavior while avoiding repeated full-vector scans in interactive workloads.
+
+
+## Session integration
+
+Session xref rendering builds `ImportIndex` lazily on the first `axt/axf` query:
+
+```text
+session-import-index=miss
+```
+
+Later xref queries reuse it and emit `session-import-index=hit`.
+
+The index is not built for `afi` or other commands that do not render import annotations. One-shot xref commands retain the simple linear lookup path as a reference implementation.
