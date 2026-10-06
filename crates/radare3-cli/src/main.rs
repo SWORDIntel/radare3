@@ -1139,6 +1139,36 @@ fn format_import_reference(image: &radare3::image::BinaryImage, address: Address
     }
 }
 
+fn import_reference_json_indexed(
+    image: &radare3::image::BinaryImage,
+    index: &radare3::image::ImportIndex,
+    address: Address,
+) -> serde_json::Value {
+    match index.import(&image.imports, address) {
+        Some(import) => serde_json::json!({
+            "library": import.library,
+            "name": import.name,
+            "kind": import_kind_name(import.kind),
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn format_import_reference_indexed(
+    image: &radare3::image::BinaryImage,
+    index: &radare3::image::ImportIndex,
+    address: Address,
+) -> String {
+    let Some(import) = index.import(&image.imports, address) else {
+        return String::new();
+    };
+
+    match import.library.as_deref() {
+        Some(library) => format!(" import={library}!{}", import.name),
+        None => format!(" import={}", import.name),
+    }
+}
+
 const fn import_kind_name(kind: radare3::image::ImportKind) -> &'static str {
     match kind {
         radare3::image::ImportKind::Function => "function",
@@ -1233,6 +1263,7 @@ struct SessionState {
     analysis: Option<AnalysisResult>,
     function_index: Option<radare3::cfg::FunctionIndex>,
     xref_index: Option<radare3::xref::XrefIndex>,
+    import_index: Option<radare3::image::ImportIndex>,
     analysis_options: AnalysisOptions,
     seek: Address,
 }
@@ -1308,6 +1339,22 @@ impl SessionState {
             .as_ref()
             .ok_or_else(|| "session xref index is unavailable".to_string())
     }
+
+    fn ensure_import_index(&mut self) {
+        if self.import_index.is_some() {
+            eprintln!("session-import-index=hit");
+            return;
+        }
+
+        self.import_index = Some(radare3::image::ImportIndex::build(&self.image.imports));
+        eprintln!("session-import-index=miss");
+    }
+
+    fn import_index(&self) -> Result<&radare3::image::ImportIndex, String> {
+        self.import_index
+            .as_ref()
+            .ok_or_else(|| "session import index is unavailable".to_string())
+    }
 }
 
 fn session(path: &str) -> Result<(), String> {
@@ -1319,6 +1366,7 @@ fn session(path: &str) -> Result<(), String> {
         analysis: None,
         function_index: None,
         xref_index: None,
+        import_index: None,
         analysis_options,
         seek,
     };
@@ -1412,11 +1460,13 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
             state.ensure_xref_index()?;
+            state.ensure_import_index();
             let address = session_requested_address(state.seek, requested.as_deref())?;
             render_session_xrefs(
                 &state.image,
                 state.analysis()?,
                 state.xref_index()?,
+                state.import_index()?,
                 address,
                 head.starts_with("axt"),
                 head.ends_with('j'),
@@ -1605,6 +1655,7 @@ fn render_session_xrefs(
     image: &radare3::image::BinaryImage,
     result: &AnalysisResult,
     index: &radare3::xref::XrefIndex,
+    import_index: &radare3::image::ImportIndex,
     address: Address,
     incoming: bool,
     json: bool,
@@ -1619,7 +1670,7 @@ fn render_session_xrefs(
                         "from": xref.from.0,
                         "to": xref.to.0,
                         "kind": xref_kind_name(xref.kind),
-                        "import": import_reference_json(image, xref.to),
+                        "import": import_reference_json_indexed(image, import_index, xref.to),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1632,7 +1683,7 @@ fn render_session_xrefs(
                         "from": xref.from.0,
                         "to": xref.to.0,
                         "kind": xref_kind_name(xref.kind),
-                        "import": import_reference_json(image, xref.to),
+                        "import": import_reference_json_indexed(image, import_index, xref.to),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1652,7 +1703,7 @@ fn render_session_xrefs(
                 xref_kind_name(xref.kind),
                 xref.from,
                 xref.to,
-                format_import_reference(image, xref.to)
+                format_import_reference_indexed(image, import_index, xref.to)
             );
         }
     } else {
@@ -1662,7 +1713,7 @@ fn render_session_xrefs(
                 xref_kind_name(xref.kind),
                 xref.from,
                 xref.to,
-                format_import_reference(image, xref.to)
+                format_import_reference_indexed(image, import_index, xref.to)
             );
         }
     }
