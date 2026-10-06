@@ -1535,20 +1535,32 @@ fn render_session_xrefs(
 ) -> Result<(), String> {
     if json {
         let refs = if incoming {
-            index.incoming(&result.xrefs, address)
+            index
+                .incoming(&result.xrefs, address)
+                .map(|xref| {
+                    serde_json::json!({
+                        "id": xref.id.0,
+                        "from": xref.from.0,
+                        "to": xref.to.0,
+                        "kind": xref_kind_name(xref.kind),
+                        "import": import_reference_json(image, xref.to),
+                    })
+                })
+                .collect::<Vec<_>>()
         } else {
-            index.outgoing(&result.xrefs, address)
-        }
-        .map(|xref| {
-            serde_json::json!({
-                "id": xref.id.0,
-                "from": xref.from.0,
-                "to": xref.to.0,
-                "kind": xref_kind_name(xref.kind),
-                "import": import_reference_json(image, xref.to),
-            })
-        })
-        .collect::<Vec<_>>();
+            index
+                .outgoing(&result.xrefs, address)
+                .map(|xref| {
+                    serde_json::json!({
+                        "id": xref.id.0,
+                        "from": xref.from.0,
+                        "to": xref.to.0,
+                        "kind": xref_kind_name(xref.kind),
+                        "import": import_reference_json(image, xref.to),
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
 
         return print_json(serde_json::json!({
             "schema": if incoming { "radare3.axt.v2" } else { "radare3.axf.v2" },
