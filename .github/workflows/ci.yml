@@ -76,7 +76,9 @@ jobs:
               assert payload["schema"] == schema, (path, payload.get("schema"))
 
           with open("/tmp/r3-iij.json", encoding="utf-8") as handle:
-              assert json.load(handle)["imports"]
+              imports = json.load(handle)["imports"]
+              assert imports
+              assert any(item["slot"] is not None for item in imports)
 
           with open("/tmp/r3-aflj.json", encoding="utf-8") as handle:
               assert json.load(handle)["functions"]
@@ -99,8 +101,8 @@ jobs:
           grep -q 'mode=session' /tmp/r3-session.err
           grep -q '"schema":"radare3.afi.v1"' /tmp/r3-session.out
           grep -q '"schema":"radare3.agf.v1"' /tmp/r3-session.out
-          grep -q '"schema":"radare3.axt.v1"' /tmp/r3-session.out
-          grep -q '"schema":"radare3.axf.v1"' /tmp/r3-session.out
+          grep -q '"schema":"radare3.axt.v2"' /tmp/r3-session.out
+          grep -q '"schema":"radare3.axf.v2"' /tmp/r3-session.out
           grep -q '"schema":"radare3.info.v1"' /tmp/r3-session.out
       - name: Benchmark tooling syntax
         run: |

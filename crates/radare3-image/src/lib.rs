@@ -213,6 +213,12 @@ impl BinaryImage {
         self
     }
 
+    pub fn import_at_slot(&self, address: Address) -> Option<&Import> {
+        self.imports
+            .iter()
+            .find(|import| import.slot == Some(address))
+    }
+
     pub fn preferred_function_name(&self, address: Address) -> Option<&str> {
         self.function_seeds
             .iter()
@@ -304,6 +310,31 @@ mod tests {
             Some(2)
         );
         assert!(!image.is_mapped());
+    }
+
+    #[test]
+    fn resolves_import_by_slot() {
+        let image = BinaryImage::new(
+            Arc::from([0xc3_u8]),
+            BinaryFormat::Raw,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        assert_eq!(
+            image.import_at_slot(Address(0x2000)).map(|import| import.name.as_str()),
+            Some("puts")
+        );
+        assert_eq!(image.import_at_slot(Address(0x2008)), None);
     }
 
     #[test]

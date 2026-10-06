@@ -845,13 +845,14 @@ fn query_xrefs(path: &str, requested: &str, incoming: bool, json: bool) -> Resul
                     "from": xref.from.0,
                     "to": xref.to.0,
                     "kind": xref_kind_name(xref.kind),
+                    "import": import_reference_json(&image, xref.to),
                 })
             })
             .collect::<Vec<_>>();
         let schema = if incoming {
-            "radare3.axt.v1"
+            "radare3.axt.v2"
         } else {
-            "radare3.axf.v1"
+            "radare3.axf.v2"
         };
         return print_json(serde_json::json!({
             "schema": schema,
@@ -861,7 +862,13 @@ fn query_xrefs(path: &str, requested: &str, incoming: bool, json: bool) -> Resul
     }
 
     for xref in matches {
-        println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
+        println!(
+            "{} {} -> {}{}",
+            xref_kind_name(xref.kind),
+            xref.from,
+            xref.to,
+            format_import_reference(&image, xref.to)
+        );
     }
 
     Ok(())
@@ -1082,6 +1089,31 @@ const fn xref_kind_name(kind: radare3::xref::XrefKind) -> &'static str {
     }
 }
 
+fn import_reference_json(
+    image: &radare3::image::BinaryImage,
+    address: Address,
+) -> serde_json::Value {
+    match image.import_at_slot(address) {
+        Some(import) => serde_json::json!({
+            "library": import.library,
+            "name": import.name,
+            "kind": import_kind_name(import.kind),
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn format_import_reference(image: &radare3::image::BinaryImage, address: Address) -> String {
+    let Some(import) = image.import_at_slot(address) else {
+        return String::new();
+    };
+
+    match import.library.as_deref() {
+        Some(library) => format!(" import={library}!{}", import.name),
+        None => format!(" import={}", import.name),
+    }
+}
+
 const fn import_kind_name(kind: radare3::image::ImportKind) -> &'static str {
     match kind {
         radare3::image::ImportKind::Function => "function",
@@ -1290,6 +1322,7 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
             state.ensure_analysis()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
             render_session_xrefs(
+                &state.image,
                 state.analysis()?,
                 address,
                 head.starts_with("axt"),
@@ -1470,6 +1503,7 @@ fn render_session_agf(result: &AnalysisResult, address: Address, json: bool) -> 
 }
 
 fn render_session_xrefs(
+    image: &radare3::image::BinaryImage,
     result: &AnalysisResult,
     address: Address,
     incoming: bool,
@@ -1496,18 +1530,25 @@ fn render_session_xrefs(
                     "from": xref.from.0,
                     "to": xref.to.0,
                     "kind": xref_kind_name(xref.kind),
+                    "import": import_reference_json(image, xref.to),
                 })
             })
             .collect::<Vec<_>>();
         return print_json(serde_json::json!({
-            "schema": if incoming { "radare3.axt.v1" } else { "radare3.axf.v1" },
+            "schema": if incoming { "radare3.axt.v2" } else { "radare3.axf.v2" },
             "address": address.0,
             "xrefs": refs,
         }));
     }
 
     for xref in matches {
-        println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
+        println!(
+            "{} {} -> {}{}",
+            xref_kind_name(xref.kind),
+            xref.from,
+            xref.to,
+            format_import_reference(image, xref.to)
+        );
     }
     Ok(())
 }

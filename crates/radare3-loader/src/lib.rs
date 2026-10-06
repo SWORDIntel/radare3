@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use radare3_image::{
 };
 use radare3_types::{Address, Architecture, BinaryFormat};
 
-pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v3-imports";
+pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v4-elf-import-slots";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadError {
@@ -187,7 +188,12 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
 }
 
 fn collect_elf_imports(elf: &goblin::elf::Elf<'_>, out: &mut Vec<Import>) {
-    for symbol in elf.dynsyms.iter() {
+    let mut slots = BTreeMap::new();
+    collect_elf_relocation_slots(&elf.pltrelocs, &mut slots);
+    collect_elf_relocation_slots(&elf.dynrelas, &mut slots);
+    collect_elf_relocation_slots(&elf.dynrels, &mut slots);
+
+    for (symbol_index, symbol) in elf.dynsyms.iter().enumerate() {
         if symbol.st_shndx != SHN_UNDEF as usize {
             continue;
         }
@@ -201,7 +207,7 @@ fn collect_elf_imports(elf: &goblin::elf::Elf<'_>, out: &mut Vec<Import>) {
         };
 
         out.push(Import {
-            slot: None,
+            slot: slots.get(&symbol_index).copied(),
             library: None,
             name: name.to_owned(),
             ordinal: None,
@@ -211,6 +217,21 @@ fn collect_elf_imports(elf: &goblin::elf::Elf<'_>, out: &mut Vec<Import>) {
                 _ => ImportKind::Other,
             },
         });
+    }
+}
+
+fn collect_elf_relocation_slots(
+    relocations: &goblin::elf::RelocSection<'_>,
+    slots: &mut BTreeMap<usize, Address>,
+) {
+    for relocation in relocations.iter() {
+        if relocation.r_sym == 0 || relocation.r_offset == 0 {
+            continue;
+        }
+
+        slots
+            .entry(relocation.r_sym)
+            .or_insert(Address(relocation.r_offset));
     }
 }
 

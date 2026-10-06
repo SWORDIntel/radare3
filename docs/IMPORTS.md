@@ -32,3 +32,16 @@ radare3 iij <file>
 ```
 
 JSON schema: `radare3.imports.v1`.
+
+
+## ELF relocation-backed slots
+
+ELF imports now consult dynamic relocations. Slot selection is deterministic:
+
+1. `pltrelocs`
+2. `dynrelas`
+3. `dynrels`
+
+The first relocation for a dynamic-symbol index wins. The relocation's `r_offset` becomes the normalized import slot address.
+
+This makes typical x86-64 PLT/GOT imports directly addressable by `ii/iij` and allows data xrefs landing on a GOT slot to be annotated with the import name.
