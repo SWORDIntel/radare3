@@ -30,6 +30,10 @@ fn main() {
             Some(path) => info(&path),
             None => Err("info requires a file path".to_string()),
         },
+        Some("ij") => match args.next() {
+            Some(path) => info_json(&path),
+            None => Err("ij requires a file path".to_string()),
+        },
         Some("decode") => match (args.next(), args.next()) {
             (Some(path), Some(address)) => decode(&path, &address),
             _ => Err("decode requires a file path and virtual address".to_string()),
@@ -37,6 +41,10 @@ fn main() {
         Some("afl" | "analyze") => match args.next() {
             Some(path) => afl(&path, false),
             None => Err("afl requires a file path".to_string()),
+        },
+        Some("aflj") => match args.next() {
+            Some(path) => afl_json(&path),
+            None => Err("aflj requires a file path".to_string()),
         },
         Some("afl-seq" | "analyze-seq") => match args.next() {
             Some(path) => afl(&path, true),
@@ -50,9 +58,17 @@ fn main() {
             Some(path) => agf(&path, args.next().as_deref()),
             None => Err("agf requires a file path".to_string()),
         },
+        Some("agfj") => match args.next() {
+            Some(path) => agf_json(&path, args.next().as_deref()),
+            None => Err("agfj requires a file path".to_string()),
+        },
         Some("izz") => match args.next() {
             Some(path) => izz(&path, args.next().as_deref()),
             None => Err("izz requires a file path".to_string()),
+        },
+        Some("izzj") => match args.next() {
+            Some(path) => izz_json(&path, args.next().as_deref()),
+            None => Err("izzj requires a file path".to_string()),
         },
         Some("verify") => match args.next() {
             Some(path) => verify(&path),
@@ -61,6 +77,10 @@ fn main() {
         Some("search" | "/x") => match (args.next(), args.next()) {
             (Some(path), Some(pattern)) => search_bytes(&path, &pattern),
             _ => Err("search requires a file path and hexadecimal pattern".to_string()),
+        },
+        Some("/xj") => match (args.next(), args.next()) {
+            (Some(path), Some(pattern)) => search_bytes_json(&path, &pattern),
+            _ => Err("/xj requires a file path and hexadecimal pattern".to_string()),
         },
         Some(other) => Err(format!("unsupported command: {other}")),
     };
@@ -73,7 +93,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -118,6 +138,39 @@ fn info(path: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn info_json(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    let segments = image
+        .segments
+        .iter()
+        .map(|segment| {
+            serde_json::json!({
+                "name": segment.name,
+                "address": segment.address.0,
+                "file_offset": segment.file_offset,
+                "file_size": segment.file_size,
+                "memory_size": segment.memory_size,
+                "permissions": {
+                    "read": segment.permissions.read,
+                    "write": segment.permissions.write,
+                    "execute": segment.permissions.execute,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    print_json(serde_json::json!({
+        "schema": "radare3.info.v1",
+        "format": format_name(image.format),
+        "architecture": architecture_name(image.architecture),
+        "storage": if image.is_mapped() { "mmap" } else { "owned" },
+        "base_address": image.base_address.0,
+        "entry_point": image.entry_point.map(|address| address.0),
+        "function_seed_count": image.function_seeds.len(),
+        "segments": segments,
+    }))
 }
 
 fn decode(path: &str, address: &str) -> Result<(), String> {
@@ -174,6 +227,33 @@ fn afl(path: &str, sequential: bool) -> Result<(), String> {
     print_afl_result(&result, if sequential { "sequential" } else { "parallel" });
 
     Ok(())
+}
+
+fn afl_json(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+
+    let functions = result
+        .cfg
+        .functions
+        .values()
+        .map(|function| {
+            serde_json::json!({
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+                "block_count": function.blocks.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    print_json(serde_json::json!({
+        "schema": "radare3.afl.v1",
+        "fidelity": fidelity_name(result.fidelity),
+        "functions": functions,
+    }))
 }
 
 fn afl_cached(path: &str, cache_dir: Option<&str>) -> Result<(), String> {
@@ -309,6 +389,54 @@ fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+fn agf_json(path: &str, requested: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+
+    let address = match requested {
+        Some(value) => parse_address(value)?,
+        None => image
+            .entry_point
+            .ok_or_else(|| "binary has no entry point; pass a function address".to_string())?,
+    };
+
+    let function = result
+        .cfg
+        .functions
+        .values()
+        .find(|function| function.entry == address)
+        .ok_or_else(|| format!("no discovered function at {address}"))?;
+
+    let blocks = function
+        .blocks
+        .iter()
+        .map(|block_id| {
+            let block = result
+                .cfg
+                .blocks
+                .get(block_id)
+                .ok_or_else(|| "CFG contains a missing block reference".to_string())?;
+            Ok(serde_json::json!({
+                "id": block.id.0,
+                "start": block.start.0,
+                "end": block.end.0,
+                "successors": block.successors.iter().map(|id| id.0).collect::<Vec<_>>(),
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    print_json(serde_json::json!({
+        "schema": "radare3.agf.v1",
+        "function": {
+            "id": function.id.0,
+            "entry": function.entry.0,
+            "name": function.name,
+            "blocks": blocks,
+        }
+    }))
+}
+
 fn verify(path: &str) -> Result<(), String> {
     let image = load(path)?;
     ensure_x86_64(&image)?;
@@ -341,11 +469,7 @@ fn verify(path: &str) -> Result<(), String> {
 
 fn izz(path: &str, minimum: Option<&str>) -> Result<(), String> {
     let image = load(path)?;
-    let min_chars = minimum
-        .map(str::parse::<usize>)
-        .transpose()
-        .map_err(|error| format!("invalid minimum string length: {error}"))?
-        .unwrap_or(4);
+    let min_chars = parse_minimum_string_length(minimum)?;
 
     for string in extract_strings(&image, min_chars) {
         let encoding = match string.encoding {
@@ -356,6 +480,27 @@ fn izz(path: &str, minimum: Option<&str>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn izz_json(path: &str, minimum: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    let min_chars = parse_minimum_string_length(minimum)?;
+    let strings = extract_strings(&image, min_chars)
+        .into_iter()
+        .map(|string| {
+            serde_json::json!({
+                "address": string.address.0,
+                "encoding": string_encoding_name(string.encoding),
+                "value": string.value,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    print_json(serde_json::json!({
+        "schema": "radare3.izz.v1",
+        "minimum_characters": min_chars,
+        "strings": strings,
+    }))
 }
 
 fn search_bytes(path: &str, pattern: &str) -> Result<(), String> {
@@ -373,6 +518,84 @@ fn search_bytes(path: &str, pattern: &str) -> Result<(), String> {
     eprintln!("hits={}", hits.len());
 
     Ok(())
+}
+
+fn search_bytes_json(path: &str, pattern: &str) -> Result<(), String> {
+    let image = load(path)?;
+    let needle = parse_hex(pattern)?;
+
+    if needle.is_empty() {
+        return Err("hex pattern must not be empty".to_string());
+    }
+
+    let hits = find_bytes(&image, &needle)
+        .into_iter()
+        .map(|hit| {
+            serde_json::json!({
+                "address": hit.address.0,
+                "length": hit.length,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    print_json(serde_json::json!({
+        "schema": "radare3.search.v1",
+        "pattern_hex": hex_bytes(&needle),
+        "hits": hits,
+    }))
+}
+
+fn parse_minimum_string_length(minimum: Option<&str>) -> Result<usize, String> {
+    minimum
+        .map(str::parse::<usize>)
+        .transpose()
+        .map_err(|error| format!("invalid minimum string length: {error}"))
+        .map(|value| value.unwrap_or(4))
+}
+
+fn print_json(value: serde_json::Value) -> Result<(), String> {
+    let output = serde_json::to_string(&value)
+        .map_err(|error| format!("JSON serialization failed: {error}"))?;
+    println!("{output}");
+    Ok(())
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+const fn format_name(format: radare3::types::BinaryFormat) -> &'static str {
+    match format {
+        radare3::types::BinaryFormat::Elf => "elf",
+        radare3::types::BinaryFormat::Pe => "pe",
+        radare3::types::BinaryFormat::MachO => "macho",
+        radare3::types::BinaryFormat::Raw => "raw",
+        radare3::types::BinaryFormat::Unknown => "unknown",
+    }
+}
+
+const fn architecture_name(architecture: Architecture) -> &'static str {
+    match architecture {
+        Architecture::X86 => "x86",
+        Architecture::X86_64 => "x86_64",
+        Architecture::Arm64 => "arm64",
+        Architecture::Unknown => "unknown",
+    }
+}
+
+const fn fidelity_name(fidelity: radare3::types::Fidelity) -> &'static str {
+    match fidelity {
+        radare3::types::Fidelity::Canonical => "canonical",
+        radare3::types::Fidelity::Heuristic => "heuristic",
+        radare3::types::Fidelity::Incomplete => "incomplete",
+    }
+}
+
+const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
+    match encoding {
+        StringEncoding::Ascii => "ascii",
+        StringEncoding::Utf16Le => "utf16le",
+    }
 }
 
 fn parse_hex(value: &str) -> Result<Vec<u8>, String> {

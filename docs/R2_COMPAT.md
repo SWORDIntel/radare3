@@ -19,6 +19,11 @@ afl
 agf
 izz
 /x
+/xj
+aflj
+agfj
+izzj
+ij
 ```
 
 ## Current fallback surface
@@ -35,11 +40,6 @@ is
 iS
 px
 s
-/xj
-aflj
-agfj
-izzj
-ij
 ```
 
 ## Fallback executor
@@ -68,4 +68,4 @@ The executor exists at the compatibility-library layer. The CLI does not automat
 
 ## Next step
 
-Expose explicit CLI fallback/routing mode, then replace fallback JSON commands with native radare3 renderers one at a time.
+Expose explicit CLI fallback/routing mode. Native JSON renderers now cover the first JSON command set; remaining fallback commands can be replaced one at a time as their native engines mature.
