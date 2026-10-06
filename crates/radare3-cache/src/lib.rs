@@ -16,6 +16,7 @@ use radare3_xref::{Xref, XrefKind};
 const CACHE_KEY_DOMAIN: &[u8] = b"radare3-cache-key-v1";
 const CACHE_FILE_MAGIC: &[u8; 8] = b"R3CACHE\0";
 const CACHE_FILE_VERSION: u32 = 1;
+const CACHE_FILE_HEADER_BYTES: u64 = 8 + 4 + 32 + 8 + 32;
 const ANALYSIS_PAYLOAD_MAGIC: &[u8; 8] = b"R3ANLYS\0";
 const ANALYSIS_PAYLOAD_VERSION: u32 = 1;
 const MAX_COLLECTION_ITEMS: u32 = 10_000_000;
@@ -163,9 +164,10 @@ impl AnalysisCache for FileCache {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
+        let file_len = file.metadata()?.len();
 
         let mut magic = [0_u8; 8];
-        file.read_exact(&mut magic)?;
+        read_exact_cache(&mut file, &mut magic)?;
         if &magic != CACHE_FILE_MAGIC {
             return Err(CacheError::Corrupt);
         }
@@ -176,7 +178,7 @@ impl AnalysisCache for FileCache {
         }
 
         let mut stored_key = [0_u8; 32];
-        file.read_exact(&mut stored_key)?;
+        read_exact_cache(&mut file, &mut stored_key)?;
         if stored_key != key.0 {
             return Err(CacheError::Corrupt);
         }
@@ -186,17 +188,19 @@ impl AnalysisCache for FileCache {
             return Err(CacheError::TooLarge);
         }
 
-        let payload_len = usize::try_from(payload_len).map_err(|_| CacheError::TooLarge)?;
-        let mut expected_hash = [0_u8; 32];
-        file.read_exact(&mut expected_hash)?;
-
-        let mut payload = vec![0_u8; payload_len];
-        file.read_exact(&mut payload)?;
-
-        let mut trailing = [0_u8; 1];
-        if file.read(&mut trailing)? != 0 {
+        let expected_file_len = CACHE_FILE_HEADER_BYTES
+            .checked_add(payload_len)
+            .ok_or(CacheError::TooLarge)?;
+        if file_len != expected_file_len {
             return Err(CacheError::Corrupt);
         }
+
+        let payload_len = usize::try_from(payload_len).map_err(|_| CacheError::TooLarge)?;
+        let mut expected_hash = [0_u8; 32];
+        read_exact_cache(&mut file, &mut expected_hash)?;
+
+        let mut payload = vec![0_u8; payload_len];
+        read_exact_cache(&mut file, &mut payload)?;
 
         if blake3::hash(&payload).as_bytes() != &expected_hash {
             return Err(CacheError::Corrupt);
@@ -321,6 +325,11 @@ impl AnalysisSnapshot {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, CacheError> {
+        let payload_len = u64::try_from(bytes.len()).map_err(|_| CacheError::TooLarge)?;
+        if payload_len > DEFAULT_MAX_CACHE_PAYLOAD_BYTES {
+            return Err(CacheError::TooLarge);
+        }
+
         let mut reader = SliceReader::new(bytes);
         if reader.take(ANALYSIS_PAYLOAD_MAGIC.len())? != ANALYSIS_PAYLOAD_MAGIC {
             return Err(CacheError::Corrupt);
@@ -332,12 +341,12 @@ impl AnalysisSnapshot {
 
         let fidelity = decode_fidelity(reader.read_u8()?)?;
 
-        let function_count = reader.read_count()?;
+        let function_count = reader.read_count_with_minimum(17)?;
         let mut functions = BTreeMap::new();
         for _ in 0..function_count {
             let id = FunctionId(reader.read_u32()?);
             let entry = Address(reader.read_u64()?);
-            let block_count = reader.read_count()?;
+            let block_count = reader.read_count_with_minimum(4)?;
             let mut blocks = Vec::with_capacity(block_count);
             for _ in 0..block_count {
                 blocks.push(BlockId(reader.read_u32()?));
@@ -360,13 +369,13 @@ impl AnalysisSnapshot {
             }
         }
 
-        let basic_block_count = reader.read_count()?;
+        let basic_block_count = reader.read_count_with_minimum(24)?;
         let mut blocks = BTreeMap::new();
         for _ in 0..basic_block_count {
             let id = BlockId(reader.read_u32()?);
             let start = Address(reader.read_u64()?);
             let end = Address(reader.read_u64()?);
-            let successor_count = reader.read_count()?;
+            let successor_count = reader.read_count_with_minimum(4)?;
             let mut successors = Vec::with_capacity(successor_count);
             for _ in 0..successor_count {
                 successors.push(BlockId(reader.read_u32()?));
@@ -390,7 +399,7 @@ impl AnalysisSnapshot {
 
         validate_cfg_references(&functions, &blocks)?;
 
-        let xref_count = reader.read_count()?;
+        let xref_count = reader.read_count_with_minimum(21)?;
         let mut xrefs = Vec::with_capacity(xref_count);
         let mut xref_ids = BTreeSet::new();
         for _ in 0..xref_count {
@@ -406,7 +415,7 @@ impl AnalysisSnapshot {
             });
         }
 
-        let string_count = reader.read_count()?;
+        let string_count = reader.read_count_with_minimum(13)?;
         let mut strings = Vec::with_capacity(string_count);
         for _ in 0..string_count {
             strings.push(ExtractedString {
@@ -613,6 +622,21 @@ impl<'a> SliceReader<'a> {
         usize::try_from(count).map_err(|_| CacheError::TooLarge)
     }
 
+    fn read_count_with_minimum(
+        &mut self,
+        minimum_bytes_per_item: usize,
+    ) -> Result<usize, CacheError> {
+        let count = self.read_count()?;
+        if minimum_bytes_per_item != 0 && count > self.remaining() / minimum_bytes_per_item {
+            return Err(CacheError::Corrupt);
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
     fn read_optional_string(&mut self) -> Result<Option<String>, CacheError> {
         match self.read_u8()? {
             0 => Ok(None),
@@ -641,15 +665,23 @@ fn hash_component(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
+fn read_exact_cache(reader: &mut impl Read, bytes: &mut [u8]) -> Result<(), CacheError> {
+    match reader.read_exact(bytes) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Err(CacheError::Corrupt),
+        Err(_) => Err(CacheError::Io),
+    }
+}
+
 fn read_u32_io(reader: &mut impl Read) -> Result<u32, CacheError> {
     let mut bytes = [0_u8; 4];
-    reader.read_exact(&mut bytes)?;
+    read_exact_cache(reader, &mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
 }
 
 fn read_u64_io(reader: &mut impl Read) -> Result<u64, CacheError> {
     let mut bytes = [0_u8; 8];
-    reader.read_exact(&mut bytes)?;
+    read_exact_cache(reader, &mut bytes)?;
     Ok(u64::from_le_bytes(bytes))
 }
 
@@ -781,6 +813,32 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_rejects_every_truncated_prefix() -> Result<(), CacheError> {
+        let encoded = snapshot().encode()?;
+
+        for end in 0..encoded.len() {
+            assert_eq!(
+                AnalysisSnapshot::decode(&encoded[..end]),
+                Err(CacheError::Corrupt),
+                "truncated at byte {end}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_rejects_impossible_large_count_before_allocation() {
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(ANALYSIS_PAYLOAD_MAGIC);
+        push_u32(&mut encoded, ANALYSIS_PAYLOAD_VERSION);
+        encoded.push(encode_fidelity(Fidelity::Heuristic));
+        push_u32(&mut encoded, MAX_COLLECTION_ITEMS);
+
+        assert_eq!(AnalysisSnapshot::decode(&encoded), Err(CacheError::Corrupt));
+    }
+
+    #[test]
     fn options_fingerprint_is_order_independent_for_entrypoints() -> Result<(), CacheError> {
         let left = AnalysisOptions {
             entrypoints: vec![Address(2), Address(1), Address(2)],
@@ -819,6 +877,45 @@ mod tests {
         assert_eq!(cache.get(key), Err(CacheError::Corrupt));
         cache.remove(key)?;
         assert!(!cache.contains(key)?);
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn file_cache_treats_truncated_entries_as_corrupt() -> Result<(), CacheError> {
+        let root = test_root("truncated");
+        let cache = FileCache::new(&root);
+        let key = CacheKey::derive(&identity());
+        cache.put(key, b"cache payload")?;
+
+        let path = cache.path_for(key);
+        let valid = fs::read(&path)?;
+        let cuts = [0, 1, 7, 8, 11, 12, 43, 51, valid.len() - 1];
+
+        for cut in cuts {
+            fs::write(&path, &valid[..cut])?;
+            assert_eq!(cache.get(key), Err(CacheError::Corrupt), "cut={cut}");
+        }
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn file_cache_rejects_forged_large_payload_before_allocation() -> Result<(), CacheError> {
+        let root = test_root("forged-length");
+        let cache = FileCache::new(&root);
+        let key = CacheKey::derive(&identity());
+        cache.put(key, b"x")?;
+
+        let path = cache.path_for(key);
+        let mut bytes = fs::read(&path)?;
+        let forged = DEFAULT_MAX_CACHE_PAYLOAD_BYTES;
+        bytes[44..52].copy_from_slice(&forged.to_le_bytes());
+        fs::write(&path, bytes)?;
+
+        assert_eq!(cache.get(key), Err(CacheError::Corrupt));
 
         let _ = fs::remove_dir_all(root);
         Ok(())
