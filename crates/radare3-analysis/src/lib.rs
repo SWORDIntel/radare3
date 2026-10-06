@@ -16,6 +16,9 @@ const MAX_DENSE_EXECUTABLE_BYTES: usize = 64 * 1024 * 1024;
 pub struct AnalysisOptions {
     pub entrypoints: Vec<Address>,
     pub max_instructions: Option<u64>,
+    pub max_functions: Option<u64>,
+    pub max_blocks: Option<u64>,
+    pub max_xrefs: Option<u64>,
     pub deterministic: bool,
 }
 
@@ -24,6 +27,9 @@ impl Default for AnalysisOptions {
         Self {
             entrypoints: Vec::new(),
             max_instructions: None,
+            max_functions: None,
+            max_blocks: None,
+            max_xrefs: None,
             deterministic: true,
         }
     }
@@ -36,10 +42,18 @@ pub struct AnalysisResult {
     pub fidelity: Fidelity,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnalysisBudget {
+    Instructions,
+    Functions,
+    Blocks,
+    Xrefs,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnalysisError {
     UnsupportedArchitecture,
-    BudgetExceeded,
+    BudgetExceeded(AnalysisBudget),
     InternalInvariant,
 }
 
@@ -239,24 +253,42 @@ impl<D: Decoder> Analyzer for RecursiveAnalyzer<D> {
         let mut processed = BTreeSet::new();
         let mut discoveries = Vec::new();
         let mut decoded_instructions = 0_u64;
+        let mut discovered_functions = 0_u64;
+        let mut discovered_blocks = 0_u64;
+        let mut discovered_xrefs = 0_u64;
 
         while let Some(entry) = pending.pop_first() {
-            if !processed.insert(entry) || !is_executable_file_address(image, entry) {
+            if processed.contains(&entry) || !is_executable_file_address(image, entry) {
                 continue;
             }
 
-            let discovery = discover_function(
-                &self.decoder,
-                image,
-                &index,
-                &mut arena,
-                entry,
-                options.max_instructions,
+            charge_budget(
+                &mut discovered_functions,
+                1,
+                options.max_functions,
+                AnalysisBudget::Functions,
             )?;
+            processed.insert(entry);
+
+            let discovery =
+                discover_function(&self.decoder, image, &index, &mut arena, entry, options)?;
             charge_budget(
                 &mut decoded_instructions,
                 discovery.decoded_instructions,
                 options.max_instructions,
+                AnalysisBudget::Instructions,
+            )?;
+            charge_budget(
+                &mut discovered_blocks,
+                usize_to_u64(discovery.blocks.len())?,
+                options.max_blocks,
+                AnalysisBudget::Blocks,
+            )?;
+            charge_budget(
+                &mut discovered_xrefs,
+                usize_to_u64(discovery.xrefs.len())?,
+                options.max_xrefs,
+                AnalysisBudget::Xrefs,
             )?;
 
             pending.extend(
@@ -295,6 +327,9 @@ impl<D: Decoder> Analyzer for ParallelAnalyzer<D> {
         let mut processed = BTreeSet::new();
         let mut all_discoveries = Vec::new();
         let mut decoded_instructions = 0_u64;
+        let mut discovered_functions = 0_u64;
+        let mut discovered_blocks = 0_u64;
+        let mut discovered_xrefs = 0_u64;
 
         while !pending.is_empty() {
             let wave: Vec<Address> = pending
@@ -310,6 +345,12 @@ impl<D: Decoder> Analyzer for ParallelAnalyzer<D> {
                 break;
             }
 
+            charge_budget(
+                &mut discovered_functions,
+                usize_to_u64(wave.len())?,
+                options.max_functions,
+                AnalysisBudget::Functions,
+            )?;
             processed.extend(wave.iter().copied());
 
             let mut results: Vec<(Address, Result<FunctionDiscovery, AnalysisError>)> = wave
@@ -319,14 +360,7 @@ impl<D: Decoder> Analyzer for ParallelAnalyzer<D> {
                     |arena, entry| {
                         (
                             *entry,
-                            discover_function(
-                                &self.decoder,
-                                image,
-                                &index,
-                                arena,
-                                *entry,
-                                options.max_instructions,
-                            ),
+                            discover_function(&self.decoder, image, &index, arena, *entry, options),
                         )
                     },
                 )
@@ -340,6 +374,19 @@ impl<D: Decoder> Analyzer for ParallelAnalyzer<D> {
                     &mut decoded_instructions,
                     discovery.decoded_instructions,
                     options.max_instructions,
+                    AnalysisBudget::Instructions,
+                )?;
+                charge_budget(
+                    &mut discovered_blocks,
+                    usize_to_u64(discovery.blocks.len())?,
+                    options.max_blocks,
+                    AnalysisBudget::Blocks,
+                )?;
+                charge_budget(
+                    &mut discovered_xrefs,
+                    usize_to_u64(discovery.xrefs.len())?,
+                    options.max_xrefs,
+                    AnalysisBudget::Xrefs,
                 )?;
 
                 pending.extend(
@@ -363,7 +410,7 @@ fn discover_function<D: Decoder>(
     index: &ExecutableAddressIndex,
     arena: &mut WorkerArena,
     entry: Address,
-    max_instructions: Option<u64>,
+    options: &AnalysisOptions,
 ) -> Result<FunctionDiscovery, AnalysisError> {
     arena.reset();
 
@@ -382,6 +429,10 @@ fn discover_function<D: Decoder>(
             continue;
         }
 
+        if budget_reached(blocks.len(), options.max_blocks)? {
+            return Err(AnalysisError::BudgetExceeded(AnalysisBudget::Blocks));
+        }
+
         let mut current = block_start;
         let mut successors = BTreeSet::new();
 
@@ -391,10 +442,13 @@ fn discover_function<D: Decoder>(
                 break current;
             }
 
-            if let Some(limit) = max_instructions {
-                if decoded_instructions >= limit {
-                    return Err(AnalysisError::BudgetExceeded);
-                }
+            if options
+                .max_instructions
+                .is_some_and(|limit| decoded_instructions >= limit)
+            {
+                return Err(AnalysisError::BudgetExceeded(
+                    AnalysisBudget::Instructions,
+                ));
             }
 
             let Some(bytes) = image.bytes_at(current, 15) else {
@@ -427,7 +481,11 @@ fn discover_function<D: Decoder>(
                 }
                 FlowKind::Call => {
                     if let Some(target) = decoded.target {
-                        xrefs.insert((decoded.address, target, XrefKindKey::Call));
+                        insert_xref(
+                            &mut xrefs,
+                            (decoded.address, target, XrefKindKey::Call),
+                            options.max_xrefs,
+                        )?;
                         if is_executable_file_address(image, target) {
                             callees.insert(target);
                         }
@@ -436,7 +494,11 @@ fn discover_function<D: Decoder>(
                 }
                 FlowKind::Branch => {
                     if let Some(target) = decoded.target {
-                        xrefs.insert((decoded.address, target, XrefKindKey::Code));
+                        insert_xref(
+                            &mut xrefs,
+                            (decoded.address, target, XrefKindKey::Code),
+                            options.max_xrefs,
+                        )?;
                         enqueue_block(
                             image,
                             target,
@@ -449,7 +511,11 @@ fn discover_function<D: Decoder>(
                 }
                 FlowKind::ConditionalBranch => {
                     if let Some(target) = decoded.target {
-                        xrefs.insert((decoded.address, target, XrefKindKey::Code));
+                        insert_xref(
+                            &mut xrefs,
+                            (decoded.address, target, XrefKindKey::Code),
+                            options.max_xrefs,
+                        )?;
                         enqueue_block(
                             image,
                             target,
@@ -649,15 +715,45 @@ fn reachable_blocks(entry: Address, blocks: &BTreeMap<Address, TempBlock>) -> BT
     reachable
 }
 
-fn charge_budget(total: &mut u64, amount: u64, limit: Option<u64>) -> Result<(), AnalysisError> {
+fn charge_budget(
+    total: &mut u64,
+    amount: u64,
+    limit: Option<u64>,
+    budget: AnalysisBudget,
+) -> Result<(), AnalysisError> {
     *total = total
         .checked_add(amount)
-        .ok_or(AnalysisError::BudgetExceeded)?;
+        .ok_or(AnalysisError::BudgetExceeded(budget))?;
 
     if limit.is_some_and(|limit| *total > limit) {
-        return Err(AnalysisError::BudgetExceeded);
+        return Err(AnalysisError::BudgetExceeded(budget));
     }
 
+    Ok(())
+}
+
+fn budget_reached(current: usize, limit: Option<u64>) -> Result<bool, AnalysisError> {
+    Ok(limit.is_some_and(|limit| usize_to_u64(current).is_ok_and(|current| current >= limit)))
+}
+
+fn usize_to_u64(value: usize) -> Result<u64, AnalysisError> {
+    u64::try_from(value).map_err(|_| AnalysisError::InternalInvariant)
+}
+
+fn insert_xref(
+    xrefs: &mut BTreeSet<(Address, Address, XrefKindKey)>,
+    xref: (Address, Address, XrefKindKey),
+    limit: Option<u64>,
+) -> Result<(), AnalysisError> {
+    if xrefs.contains(&xref) {
+        return Ok(());
+    }
+
+    if budget_reached(xrefs.len(), limit)? {
+        return Err(AnalysisError::BudgetExceeded(AnalysisBudget::Xrefs));
+    }
+
+    xrefs.insert(xref);
     Ok(())
 }
 
@@ -872,7 +968,47 @@ mod tests {
         );
         assert_eq!(
             ParallelAnalyzer::new(TestDecoder).analyze(&image, &options),
-            Err(AnalysisError::BudgetExceeded)
+            Err(AnalysisError::BudgetExceeded(
+                AnalysisBudget::Instructions
+            ))
         );
+    }
+
+    #[test]
+    fn enforces_function_block_and_xref_budgets() {
+        let image = test_image();
+
+        for (options, expected) in [
+            (
+                AnalysisOptions {
+                    max_functions: Some(1),
+                    ..AnalysisOptions::default()
+                },
+                AnalysisBudget::Functions,
+            ),
+            (
+                AnalysisOptions {
+                    max_blocks: Some(1),
+                    ..AnalysisOptions::default()
+                },
+                AnalysisBudget::Blocks,
+            ),
+            (
+                AnalysisOptions {
+                    max_xrefs: Some(1),
+                    ..AnalysisOptions::default()
+                },
+                AnalysisBudget::Xrefs,
+            ),
+        ] {
+            assert_eq!(
+                RecursiveAnalyzer::new(TestDecoder).analyze(&image, &options),
+                Err(AnalysisError::BudgetExceeded(expected))
+            );
+            assert_eq!(
+                ParallelAnalyzer::new(TestDecoder).analyze(&image, &options),
+                Err(AnalysisError::BudgetExceeded(expected))
+            );
+        }
     }
 }
