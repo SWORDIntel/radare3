@@ -622,11 +622,12 @@ impl<'a> SliceReader<'a> {
         usize::try_from(count).map_err(|_| CacheError::TooLarge)
     }
 
-    fn read_count_with_minimum(&mut self, minimum_bytes_per_item: usize) -> Result<usize, CacheError> {
+    fn read_count_with_minimum(
+        &mut self,
+        minimum_bytes_per_item: usize,
+    ) -> Result<usize, CacheError> {
         let count = self.read_count()?;
-        if minimum_bytes_per_item != 0
-            && count > self.remaining() / minimum_bytes_per_item
-        {
+        if minimum_bytes_per_item != 0 && count > self.remaining() / minimum_bytes_per_item {
             return Err(CacheError::Corrupt);
         }
         Ok(count)
