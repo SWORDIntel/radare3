@@ -22,8 +22,8 @@ impl R2Compatibility for DefaultR2Compatibility {
 
         match head {
             "afl" | "agf" | "izz" | "/x" => CommandDisposition::Native,
-            "aaa" | "afi" | "pdf" | "axt" | "axf" | "is" | "iS" | "px" | "s"
-            | "/xj" | "aflj" | "agfj" | "izzj" | "ij" => CommandDisposition::Fallback,
+            "aaa" | "afi" | "pdf" | "axt" | "axf" | "is" | "iS" | "px" | "s" | "/xj" | "aflj"
+            | "agfj" | "izzj" | "ij" => CommandDisposition::Fallback,
             _ => CommandDisposition::Unsupported,
         }
     }
