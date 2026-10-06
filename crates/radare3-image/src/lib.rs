@@ -64,6 +64,22 @@ pub struct FunctionSeed {
     pub name: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum SymbolKind {
+    Function,
+    Object,
+    Export,
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Symbol {
+    pub address: Address,
+    pub size: u64,
+    pub kind: SymbolKind,
+    pub name: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Permissions {
     pub read: bool,
@@ -106,6 +122,7 @@ pub struct BinaryImage {
     pub entry_point: Option<Address>,
     pub segments: Vec<Segment>,
     pub function_seeds: Vec<FunctionSeed>,
+    pub symbols: Vec<Symbol>,
 }
 
 impl BinaryImage {
@@ -153,6 +170,7 @@ impl BinaryImage {
             entry_point,
             segments,
             function_seeds,
+            symbols: Vec::new(),
         }
     }
 
@@ -160,6 +178,13 @@ impl BinaryImage {
         self.function_seeds.append(&mut function_seeds);
         self.function_seeds.sort();
         self.function_seeds.dedup();
+        self
+    }
+
+    pub fn with_symbols(mut self, mut symbols: Vec<Symbol>) -> Self {
+        self.symbols.append(&mut symbols);
+        self.symbols.sort();
+        self.symbols.dedup();
         self
     }
 
@@ -254,6 +279,35 @@ mod tests {
             Some(2)
         );
         assert!(!image.is_mapped());
+    }
+
+    #[test]
+    fn canonicalizes_symbols() {
+        let image = BinaryImage::new(
+            Arc::from([0xc3_u8]),
+            BinaryFormat::Raw,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![],
+        )
+        .with_symbols(vec![
+            Symbol {
+                address: Address(0x1000),
+                size: 1,
+                kind: SymbolKind::Function,
+                name: "main".to_string(),
+            },
+            Symbol {
+                address: Address(0x1000),
+                size: 1,
+                kind: SymbolKind::Function,
+                name: "main".to_string(),
+            },
+        ]);
+
+        assert_eq!(image.symbols.len(), 1);
+        assert_eq!(image.symbols[0].name, "main");
     }
 
     #[test]

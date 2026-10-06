@@ -47,6 +47,14 @@ fn main() {
             Some(path) => sections(&path, true),
             None => Err("iSj requires a file path".to_string()),
         },
+        Some("is") => match args.next() {
+            Some(path) => symbols(&path, false),
+            None => Err("is requires a file path".to_string()),
+        },
+        Some("isj") => match args.next() {
+            Some(path) => symbols(&path, true),
+            None => Err("isj requires a file path".to_string()),
+        },
         Some("decode") => match (args.next(), args.next()) {
             (Some(path), Some(address)) => decode(&path, &address),
             _ => Err("decode requires a file path and virtual address".to_string()),
@@ -145,7 +153,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -265,6 +273,42 @@ fn sections(path: &str, json: bool) -> Result<(), String> {
             u8::from(segment.permissions.read),
             u8::from(segment.permissions.write),
             u8::from(segment.permissions.execute),
+        );
+    }
+
+    Ok(())
+}
+
+fn symbols(path: &str, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+
+    if json {
+        let symbols = image
+            .symbols
+            .iter()
+            .map(|symbol| {
+                serde_json::json!({
+                    "address": symbol.address.0,
+                    "size": symbol.size,
+                    "kind": symbol_kind_name(symbol.kind),
+                    "name": symbol.name,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return print_json(serde_json::json!({
+            "schema": "radare3.symbols.v1",
+            "symbols": symbols,
+        }));
+    }
+
+    for symbol in &image.symbols {
+        println!(
+            "{} size={} {} {}",
+            symbol.address,
+            symbol.size,
+            symbol_kind_name(symbol.kind),
+            symbol.name
         );
     }
 
@@ -854,6 +898,15 @@ const fn xref_kind_name(kind: radare3::xref::XrefKind) -> &'static str {
     }
 }
 
+const fn symbol_kind_name(kind: radare3::image::SymbolKind) -> &'static str {
+    match kind {
+        radare3::image::SymbolKind::Function => "function",
+        radare3::image::SymbolKind::Object => "object",
+        radare3::image::SymbolKind::Export => "export",
+        radare3::image::SymbolKind::Other => "other",
+    }
+}
+
 const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
     match encoding {
         StringEncoding::Ascii => "ascii",
@@ -953,6 +1006,8 @@ fn route_native(path: &str, command: &str) -> Result<(), String> {
         "ij" => require_no_extra(parts, "ij").and_then(|()| info_json(path)),
         "iS" => require_no_extra(parts, "iS").and_then(|()| sections(path, false)),
         "iSj" => require_no_extra(parts, "iSj").and_then(|()| sections(path, true)),
+        "is" => require_no_extra(parts, "is").and_then(|()| symbols(path, false)),
+        "isj" => require_no_extra(parts, "isj").and_then(|()| symbols(path, true)),
         _ => Err(format!("native route missing implementation for {head}")),
     }
 }

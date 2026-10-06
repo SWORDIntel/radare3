@@ -33,7 +33,6 @@ These are recognized as useful r2 commands but are not yet implemented natively:
 ```text
 aaa
 pdf
-is
 px
 pxj
 s
@@ -119,3 +118,14 @@ radare3 pxj <file> <address> [length]
 ```
 
 Routed `px`/`pxj` remain radare2 fallbacks because r2's command semantics depend on the session seek state. radare3 does not pretend a one-shot CLI address is the same thing as a persistent r2 seek cursor.
+
+
+## Symbols
+
+`is` and `isj` are native. The normalized symbol table currently includes:
+
+- named defined ELF function symbols from `.symtab` and `.dynsym`,
+- named defined ELF object/other symbols,
+- named PE exports.
+
+Undefined/import symbols are intentionally not reported as local symbols; import normalization belongs on a separate `ii`-class surface.
