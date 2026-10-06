@@ -6,15 +6,16 @@ use std::sync::Arc;
 use goblin::Object;
 use goblin::elf::header::{EM_AARCH64, EM_X86_64};
 use goblin::elf::program_header::PT_LOAD;
-use goblin::elf::sym::{STT_FUNC, st_type};
+use goblin::elf::sym::{STT_FUNC, STT_OBJECT, st_type};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
 use radare3_image::{
-    BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment,
+    BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment, Symbol,
+    SymbolKind,
 };
 use radare3_types::{Address, Architecture, BinaryFormat};
 
-pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v1";
+pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v2-symbols";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadError {
@@ -110,21 +111,33 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
 
     let entry_point = (elf.entry != 0).then_some(Address(elf.entry));
     let mut seeds = Vec::new();
+    let mut symbols = Vec::new();
 
     for symbol in elf.syms.iter() {
         if st_type(symbol.st_info) != STT_FUNC || symbol.st_value == 0 {
             continue;
         }
 
+        let name = elf
+            .strtab
+            .get_at(symbol.st_name)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+
         seeds.push(FunctionSeed {
             address: Address(symbol.st_value),
             kind: FunctionSeedKind::Symbol,
-            name: elf
-                .strtab
-                .get_at(symbol.st_name)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned),
+            name: name.clone(),
         });
+
+        if let Some(name) = name {
+            symbols.push(Symbol {
+                address: Address(symbol.st_value),
+                size: symbol.st_size,
+                kind: SymbolKind::Function,
+                name,
+            });
+        }
     }
 
     for symbol in elf.dynsyms.iter() {
@@ -132,16 +145,30 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
             continue;
         }
 
+        let name = elf
+            .dynstrtab
+            .get_at(symbol.st_name)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+
         seeds.push(FunctionSeed {
             address: Address(symbol.st_value),
             kind: FunctionSeedKind::Symbol,
-            name: elf
-                .dynstrtab
-                .get_at(symbol.st_name)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned),
+            name: name.clone(),
         });
+
+        if let Some(name) = name {
+            symbols.push(Symbol {
+                address: Address(symbol.st_value),
+                size: symbol.st_size,
+                kind: SymbolKind::Function,
+                name,
+            });
+        }
     }
+
+    collect_elf_non_function_symbols(elf.syms.iter(), &elf.strtab, &mut symbols);
+    collect_elf_non_function_symbols(elf.dynsyms.iter(), &elf.dynstrtab, &mut symbols);
 
     Ok(BinaryImage::from_data(
         bytes,
@@ -151,7 +178,38 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
         entry_point,
         segments,
     )
-    .with_function_seeds(seeds))
+    .with_function_seeds(seeds)
+    .with_symbols(symbols))
+}
+
+fn collect_elf_non_function_symbols<'a>(
+    symbols: impl Iterator<Item = goblin::elf::sym::Sym>,
+    strings: &goblin::strtab::Strtab<'a>,
+    out: &mut Vec<Symbol>,
+) {
+    for symbol in symbols {
+        if symbol.st_value == 0 || st_type(symbol.st_info) == STT_FUNC {
+            continue;
+        }
+
+        let Some(name) = strings
+            .get_at(symbol.st_name)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+
+        out.push(Symbol {
+            address: Address(symbol.st_value),
+            size: symbol.st_size,
+            kind: if st_type(symbol.st_info) == STT_OBJECT {
+                SymbolKind::Object
+            } else {
+                SymbolKind::Other
+            },
+            name: name.to_owned(),
+        });
+    }
 }
 
 fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, LoadError> {
@@ -206,6 +264,7 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
         .map(Address);
 
     let mut seeds = Vec::new();
+    let mut symbols = Vec::new();
 
     for export in &pe.exports {
         if export.reexport.is_some() || export.rva == 0 {
@@ -219,11 +278,22 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
             continue;
         };
 
+        let name = export.name.map(str::to_owned);
+
         seeds.push(FunctionSeed {
             address,
             kind: FunctionSeedKind::Export,
-            name: export.name.map(str::to_owned),
+            name: name.clone(),
         });
+
+        if let Some(name) = name {
+            symbols.push(Symbol {
+                address,
+                size: 0,
+                kind: SymbolKind::Export,
+                name,
+            });
+        }
     }
 
     if architecture == Architecture::X86_64 {
@@ -238,7 +308,8 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
         entry_point,
         segments,
     )
-    .with_function_seeds(seeds))
+    .with_function_seeds(seeds)
+    .with_symbols(symbols))
 }
 
 fn collect_pe_runtime_function_seeds(
