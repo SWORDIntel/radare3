@@ -564,11 +564,7 @@ fn query_xrefs(path: &str, requested: &str, incoming: bool, json: bool) -> Resul
     }
 
     for xref in matches {
-        if incoming {
-            println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
-        } else {
-            println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
-        }
+        println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
     }
 
     Ok(())
