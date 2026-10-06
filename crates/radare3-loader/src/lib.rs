@@ -6,16 +6,17 @@ use std::sync::Arc;
 use goblin::Object;
 use goblin::elf::header::{EM_AARCH64, EM_X86_64};
 use goblin::elf::program_header::PT_LOAD;
+use goblin::elf::section_header::SHN_UNDEF;
 use goblin::elf::sym::{STT_FUNC, STT_OBJECT, st_type};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE};
 use radare3_image::{
-    BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Permissions, Segment, Symbol,
-    SymbolKind,
+    BinaryData, BinaryImage, FunctionSeed, FunctionSeedKind, Import, ImportKind, Permissions,
+    Segment, Symbol, SymbolKind,
 };
 use radare3_types::{Address, Architecture, BinaryFormat};
 
-pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v2-symbols";
+pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v3-imports";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadError {
@@ -112,6 +113,7 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
     let entry_point = (elf.entry != 0).then_some(Address(elf.entry));
     let mut seeds = Vec::new();
     let mut symbols = Vec::new();
+    let mut imports = Vec::new();
 
     for symbol in elf.syms.iter() {
         if st_type(symbol.st_info) != STT_FUNC || symbol.st_value == 0 {
@@ -169,6 +171,7 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
 
     collect_elf_non_function_symbols(elf.syms.iter(), &elf.strtab, &mut symbols);
     collect_elf_non_function_symbols(elf.dynsyms.iter(), &elf.dynstrtab, &mut symbols);
+    collect_elf_imports(elf, &mut imports);
 
     Ok(BinaryImage::from_data(
         bytes,
@@ -179,7 +182,36 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
         segments,
     )
     .with_function_seeds(seeds)
-    .with_symbols(symbols))
+    .with_symbols(symbols)
+    .with_imports(imports))
+}
+
+fn collect_elf_imports(elf: &goblin::elf::Elf<'_>, out: &mut Vec<Import>) {
+    for symbol in elf.dynsyms.iter() {
+        if symbol.st_shndx != SHN_UNDEF as usize {
+            continue;
+        }
+
+        let Some(name) = elf
+            .dynstrtab
+            .get_at(symbol.st_name)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+
+        out.push(Import {
+            slot: None,
+            library: None,
+            name: name.to_owned(),
+            ordinal: None,
+            kind: match st_type(symbol.st_info) {
+                STT_FUNC => ImportKind::Function,
+                STT_OBJECT => ImportKind::Object,
+                _ => ImportKind::Other,
+            },
+        });
+    }
 }
 
 fn collect_elf_non_function_symbols<'a>(
@@ -265,6 +297,7 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
 
     let mut seeds = Vec::new();
     let mut symbols = Vec::new();
+    let mut imports = Vec::new();
 
     for export in &pe.exports {
         if export.reexport.is_some() || export.rva == 0 {
@@ -296,6 +329,22 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
         }
     }
 
+    for import in &pe.imports {
+        let slot = u64::try_from(import.offset)
+            .ok()
+            .and_then(|rva| pe.image_base.checked_add(rva))
+            .map(Address);
+        let ordinal = (import.rva == 0).then_some(import.ordinal);
+
+        imports.push(Import {
+            slot,
+            library: (!import.dll.is_empty()).then(|| import.dll.to_owned()),
+            name: import.name.to_string(),
+            ordinal,
+            kind: ImportKind::Other,
+        });
+    }
+
     if architecture == Architecture::X86_64 {
         collect_pe_runtime_function_seeds(bytes.as_slice(), pe, &mut seeds);
     }
@@ -309,7 +358,8 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
         segments,
     )
     .with_function_seeds(seeds)
-    .with_symbols(symbols))
+    .with_symbols(symbols)
+    .with_imports(imports))
 }
 
 fn collect_pe_runtime_function_seeds(

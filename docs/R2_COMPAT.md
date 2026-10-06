@@ -129,3 +129,12 @@ Routed `px`/`pxj` remain radare2 fallbacks because r2's command semantics depend
 - named PE exports.
 
 Undefined/import symbols are intentionally not reported as local symbols; import normalization belongs on a separate `ii`-class surface.
+
+
+## Imports
+
+`ii` and `iij` are native.
+
+PE imports include the loader-patched IAT slot virtual address when it can be represented safely, plus DLL/name and ordinal for ordinal-only imports.
+
+ELF imports are undefined named entries from `.dynsym`. They are deliberately emitted without a fabricated slot or provider library because resolving those requires relocation/version/dependency information beyond the symbol table itself.

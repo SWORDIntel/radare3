@@ -49,6 +49,7 @@ jobs:
 
           "$r3" ij "$target" > /tmp/r3-ij.json
           "$r3" isj "$target" > /tmp/r3-isj.json
+          "$r3" iij "$target" > /tmp/r3-iij.json
           "$r3" aflj "$target" > /tmp/r3-aflj.json
           "$r3" agfj "$target" > /tmp/r3-agfj.json
           "$r3" izzj "$target" > /tmp/r3-izzj.json
@@ -60,6 +61,7 @@ jobs:
           expected = {
               "/tmp/r3-ij.json": "radare3.info.v1",
               "/tmp/r3-isj.json": "radare3.symbols.v1",
+              "/tmp/r3-iij.json": "radare3.imports.v1",
               "/tmp/r3-aflj.json": "radare3.afl.v1",
               "/tmp/r3-agfj.json": "radare3.agf.v1",
               "/tmp/r3-izzj.json": "radare3.izz.v1",
@@ -70,6 +72,9 @@ jobs:
               with open(path, encoding="utf-8") as handle:
                   payload = json.load(handle)
               assert payload["schema"] == schema, (path, payload.get("schema"))
+
+          with open("/tmp/r3-iij.json", encoding="utf-8") as handle:
+              assert json.load(handle)["imports"]
 
           with open("/tmp/r3-aflj.json", encoding="utf-8") as handle:
               assert json.load(handle)["functions"]

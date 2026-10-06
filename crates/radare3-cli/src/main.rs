@@ -55,6 +55,14 @@ fn main() {
             Some(path) => symbols(&path, true),
             None => Err("isj requires a file path".to_string()),
         },
+        Some("ii") => match args.next() {
+            Some(path) => imports(&path, false),
+            None => Err("ii requires a file path".to_string()),
+        },
+        Some("iij") => match args.next() {
+            Some(path) => imports(&path, true),
+            None => Err("iij requires a file path".to_string()),
+        },
         Some("decode") => match (args.next(), args.next()) {
             (Some(path), Some(address)) => decode(&path, &address),
             _ => Err("decode requires a file path and virtual address".to_string()),
@@ -153,7 +161,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -309,6 +317,50 @@ fn symbols(path: &str, json: bool) -> Result<(), String> {
             symbol.size,
             symbol_kind_name(symbol.kind),
             symbol.name
+        );
+    }
+
+    Ok(())
+}
+
+fn imports(path: &str, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+
+    if json {
+        let imports = image
+            .imports
+            .iter()
+            .map(|import| {
+                serde_json::json!({
+                    "slot": import.slot.map(|address| address.0),
+                    "library": import.library,
+                    "name": import.name,
+                    "ordinal": import.ordinal,
+                    "kind": import_kind_name(import.kind),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return print_json(serde_json::json!({
+            "schema": "radare3.imports.v1",
+            "imports": imports,
+        }));
+    }
+
+    for import in &image.imports {
+        println!(
+            "{} {} {} {} ordinal={}",
+            import
+                .slot
+                .map(|address| address.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            import_kind_name(import.kind),
+            import.library.as_deref().unwrap_or("-"),
+            import.name,
+            import
+                .ordinal
+                .map(|ordinal| ordinal.to_string())
+                .unwrap_or_else(|| "-".to_string())
         );
     }
 
@@ -898,6 +950,14 @@ const fn xref_kind_name(kind: radare3::xref::XrefKind) -> &'static str {
     }
 }
 
+const fn import_kind_name(kind: radare3::image::ImportKind) -> &'static str {
+    match kind {
+        radare3::image::ImportKind::Function => "function",
+        radare3::image::ImportKind::Object => "object",
+        radare3::image::ImportKind::Other => "other",
+    }
+}
+
 const fn symbol_kind_name(kind: radare3::image::SymbolKind) -> &'static str {
     match kind {
         radare3::image::SymbolKind::Function => "function",
@@ -1008,6 +1068,8 @@ fn route_native(path: &str, command: &str) -> Result<(), String> {
         "iSj" => require_no_extra(parts, "iSj").and_then(|()| sections(path, true)),
         "is" => require_no_extra(parts, "is").and_then(|()| symbols(path, false)),
         "isj" => require_no_extra(parts, "isj").and_then(|()| symbols(path, true)),
+        "ii" => require_no_extra(parts, "ii").and_then(|()| imports(path, false)),
+        "iij" => require_no_extra(parts, "iij").and_then(|()| imports(path, true)),
         _ => Err(format!("native route missing implementation for {head}")),
     }
 }
