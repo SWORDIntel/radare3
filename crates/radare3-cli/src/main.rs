@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
-use radare3::analysis::{AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer};
+use radare3::analysis::{
+    AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer,
+};
+use radare3::arch::Decoder;
+use radare3::arch_x86::{DECODER_SEMANTICS_VERSION, IcedX86Decoder};
 use radare3::cache::{
     AnalysisCache, AnalysisSnapshot, CacheError, CacheIdentity, CacheKey, FileCache,
     analysis_options_fingerprint,
 };
-use radare3::arch::Decoder;
-use radare3::arch_x86::{DECODER_SEMANTICS_VERSION, IcedX86Decoder};
 use radare3::loader::{GoblinLoader, LOADER_SEMANTICS_VERSION, Loader};
 use radare3::search::{StringEncoding, extract_strings, find_bytes};
 use radare3::types::{Address, Architecture};
@@ -169,10 +171,7 @@ fn afl(path: &str, sequential: bool) -> Result<(), String> {
         analyze_parallel(&image)?
     };
 
-    print_afl_result(
-        &result,
-        if sequential { "sequential" } else { "parallel" },
-    );
+    print_afl_result(&result, if sequential { "sequential" } else { "parallel" });
 
     Ok(())
 }
