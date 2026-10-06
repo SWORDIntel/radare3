@@ -18,10 +18,11 @@ The current static-analysis slice includes:
 - dense worker-local visited maps with sparse fallback
 - deterministic canonical CFG merge
 - exact sequential/parallel differential verification
-- call/code xrefs
+- call/code plus RIP-relative data xrefs
 - ASCII and UTF-16LE string extraction across segments in parallel
 - SIMD-dispatched single-byte and substring search through `memchr`
-- `afl`, `afl-seq`, `agf`, `izz`, and `/x`-style CLI paths
+- native r2-style analysis, xref, symbols/imports, disassembly, strings, search, and JSON command paths
+- single-load session mode with persistent seek and lazy in-memory analysis reuse
 - source-built benchmark corpus
 - stored hyperfine JSON + machine metadata
 - median regression gate
@@ -40,10 +41,41 @@ cargo run -p radare3-cli -- izz /bin/ls
 cargo run -p radare3-cli -- search /bin/ls 7f454c46
 cargo run -p radare3-cli -- /x /bin/ls 7f454c46
 cargo run -p radare3-cli -- verify /bin/ls
+cargo run -p radare3-cli -- session /bin/ls
 ```
 
 `afl` uses the parallel analyzer. `afl-seq` is the truth/performance oracle. `search` and `/x` are aliases and accept even-length hexadecimal patterns.
 
+
+
+## Single-load session
+
+For repeated work on one binary:
+
+```sh
+radare3 session ./sample
+```
+
+The first analysis-backed command computes analysis once; later analysis commands reuse the same in-memory result. The mmap and seek state remain live for the session.
+
+Initial commands:
+
+```text
+s [address]
+px [length]
+pxj [length]
+afl
+pdf [function-address]
+pdfj [function-address]
+info / ij
+iS / iSj
+is / isj
+ii / iij
+? / help
+q / quit
+```
+
+See [docs/SESSION.md](docs/SESSION.md).
 
 ## Resource limits
 

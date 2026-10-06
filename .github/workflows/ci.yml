@@ -87,6 +87,17 @@ jobs:
           with open("/tmp/r3-xj.json", encoding="utf-8") as handle:
               assert len(json.load(handle)["hits"]) >= 2
           PY
+      - name: Session reuse smoke
+        run: |
+          r3="./target/debug/radare3"
+          target=".radare3/corpus/r3bench-o0"
+
+          printf 'afl\npdf\ns\npx 16\nij\nq\n' | "$r3" session "$target"             > /tmp/r3-session.out 2> /tmp/r3-session.err
+
+          test "$(grep -c 'session-analysis=miss' /tmp/r3-session.err)" -eq 1
+          test "$(grep -c 'session-analysis=hit' /tmp/r3-session.err)" -eq 1
+          grep -q 'mode=session' /tmp/r3-session.err
+          grep -q '"schema":"radare3.info.v1"' /tmp/r3-session.out
       - name: Benchmark tooling syntax
         run: |
           bash -n scripts/run-benchmark-campaign.sh
