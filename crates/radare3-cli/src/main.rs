@@ -1206,6 +1206,7 @@ fn parse_length(value: Option<&str>) -> Result<usize, String> {
 struct SessionState {
     image: radare3::image::BinaryImage,
     analysis: Option<AnalysisResult>,
+    xref_index: Option<radare3::xref::XrefIndex>,
     analysis_options: AnalysisOptions,
     seek: Address,
 }
@@ -1229,6 +1230,26 @@ impl SessionState {
             .as_ref()
             .ok_or_else(|| "session analysis is unavailable".to_string())
     }
+
+    fn ensure_xref_index(&mut self) -> Result<(), String> {
+        self.ensure_analysis()?;
+
+        if self.xref_index.is_some() {
+            eprintln!("session-xref-index=hit");
+            return Ok(());
+        }
+
+        let index = radare3::xref::XrefIndex::build(&self.analysis()?.xrefs);
+        self.xref_index = Some(index);
+        eprintln!("session-xref-index=miss");
+        Ok(())
+    }
+
+    fn xref_index(&self) -> Result<&radare3::xref::XrefIndex, String> {
+        self.xref_index
+            .as_ref()
+            .ok_or_else(|| "session xref index is unavailable".to_string())
+    }
 }
 
 fn session(path: &str) -> Result<(), String> {
@@ -1238,6 +1259,7 @@ fn session(path: &str) -> Result<(), String> {
     let mut state = SessionState {
         image,
         analysis: None,
+        xref_index: None,
         analysis_options,
         seek,
     };
@@ -1319,11 +1341,12 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
         "axt" | "axtj" | "axf" | "axfj" => {
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
-            state.ensure_analysis()?;
+            state.ensure_xref_index()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
             render_session_xrefs(
                 &state.image,
                 state.analysis()?,
+                state.xref_index()?,
                 address,
                 head.starts_with("axt"),
                 head.ends_with('j'),
@@ -1505,35 +1528,28 @@ fn render_session_agf(result: &AnalysisResult, address: Address, json: bool) -> 
 fn render_session_xrefs(
     image: &radare3::image::BinaryImage,
     result: &AnalysisResult,
+    index: &radare3::xref::XrefIndex,
     address: Address,
     incoming: bool,
     json: bool,
 ) -> Result<(), String> {
-    let matches = result
-        .xrefs
-        .iter()
-        .filter(|xref| {
-            if incoming {
-                xref.to == address
-            } else {
-                xref.from == address
-            }
+    if json {
+        let refs = if incoming {
+            index.incoming(&result.xrefs, address)
+        } else {
+            index.outgoing(&result.xrefs, address)
+        }
+        .map(|xref| {
+            serde_json::json!({
+                "id": xref.id.0,
+                "from": xref.from.0,
+                "to": xref.to.0,
+                "kind": xref_kind_name(xref.kind),
+                "import": import_reference_json(image, xref.to),
+            })
         })
         .collect::<Vec<_>>();
 
-    if json {
-        let refs = matches
-            .iter()
-            .map(|xref| {
-                serde_json::json!({
-                    "id": xref.id.0,
-                    "from": xref.from.0,
-                    "to": xref.to.0,
-                    "kind": xref_kind_name(xref.kind),
-                    "import": import_reference_json(image, xref.to),
-                })
-            })
-            .collect::<Vec<_>>();
         return print_json(serde_json::json!({
             "schema": if incoming { "radare3.axt.v2" } else { "radare3.axf.v2" },
             "address": address.0,
@@ -1541,15 +1557,28 @@ fn render_session_xrefs(
         }));
     }
 
-    for xref in matches {
-        println!(
-            "{} {} -> {}{}",
-            xref_kind_name(xref.kind),
-            xref.from,
-            xref.to,
-            format_import_reference(image, xref.to)
-        );
+    if incoming {
+        for xref in index.incoming(&result.xrefs, address) {
+            println!(
+                "{} {} -> {}{}",
+                xref_kind_name(xref.kind),
+                xref.from,
+                xref.to,
+                format_import_reference(image, xref.to)
+            );
+        }
+    } else {
+        for xref in index.outgoing(&result.xrefs, address) {
+            println!(
+                "{} {} -> {}{}",
+                xref_kind_name(xref.kind),
+                xref.from,
+                xref.to,
+                format_import_reference(image, xref.to)
+            );
+        }
     }
+
     Ok(())
 }
 
