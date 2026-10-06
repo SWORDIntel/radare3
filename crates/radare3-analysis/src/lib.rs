@@ -446,9 +446,7 @@ fn discover_function<D: Decoder>(
                 .max_instructions
                 .is_some_and(|limit| decoded_instructions >= limit)
             {
-                return Err(AnalysisError::BudgetExceeded(
-                    AnalysisBudget::Instructions,
-                ));
+                return Err(AnalysisError::BudgetExceeded(AnalysisBudget::Instructions));
             }
 
             let Some(bytes) = image.bytes_at(current, 15) else {
@@ -968,9 +966,7 @@ mod tests {
         );
         assert_eq!(
             ParallelAnalyzer::new(TestDecoder).analyze(&image, &options),
-            Err(AnalysisError::BudgetExceeded(
-                AnalysisBudget::Instructions
-            ))
+            Err(AnalysisError::BudgetExceeded(AnalysisBudget::Instructions))
         );
     }
 
