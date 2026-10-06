@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::io::{self, Write};
+
 use radare3::analysis::{
     AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer,
 };
@@ -10,6 +12,9 @@ use radare3::cache::{
     analysis_options_fingerprint,
 };
 use radare3::loader::{GoblinLoader, LOADER_SEMANTICS_VERSION, Loader};
+use radare3::r2::{
+    CommandDisposition, DefaultR2Compatibility, R2Compatibility, R2FallbackExecutor,
+};
 use radare3::search::{StringEncoding, extract_strings, find_bytes};
 use radare3::types::{Address, Architecture};
 
@@ -82,6 +87,13 @@ fn main() {
             (Some(path), Some(pattern)) => search_bytes_json(&path, &pattern),
             _ => Err("/xj requires a file path and hexadecimal pattern".to_string()),
         },
+        Some("route") => match args.next() {
+            Some(path) => {
+                let command = args.collect::<Vec<_>>().join(" ");
+                route_command(&path, &command)
+            }
+            None => Err("route requires a file path and command".to_string()),
+        },
         Some(other) => Err(format!("unsupported command: {other}")),
     };
 
@@ -93,7 +105,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -595,6 +607,142 @@ const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
     match encoding {
         StringEncoding::Ascii => "ascii",
         StringEncoding::Utf16Le => "utf16le",
+    }
+}
+
+fn route_command(path: &str, command: &str) -> Result<(), String> {
+    if command.trim().is_empty() {
+        return Err("route requires a non-empty command".to_string());
+    }
+
+    match DefaultR2Compatibility.classify_command(command) {
+        CommandDisposition::Native => route_native(path, command),
+        CommandDisposition::Fallback => route_fallback(path, command),
+        CommandDisposition::Unsupported => Err(format!("unsupported routed command: {command}")),
+    }
+}
+
+fn route_native(path: &str, command: &str) -> Result<(), String> {
+    let mut parts = command.split_ascii_whitespace();
+    let head = parts
+        .next()
+        .ok_or_else(|| "route requires a non-empty command".to_string())?;
+
+    match head {
+        "afl" => require_no_extra(parts, "afl").and_then(|()| afl(path, false)),
+        "aflj" => require_no_extra(parts, "aflj").and_then(|()| afl_json(path)),
+        "agf" => route_optional_address(path, parts, false),
+        "agfj" => route_optional_address(path, parts, true),
+        "izz" => route_optional_minimum(path, parts, false),
+        "izzj" => route_optional_minimum(path, parts, true),
+        "/x" => route_pattern(path, parts, false),
+        "/xj" => route_pattern(path, parts, true),
+        "ij" => require_no_extra(parts, "ij").and_then(|()| info_json(path)),
+        _ => Err(format!("native route missing implementation for {head}")),
+    }
+}
+
+fn route_fallback(path: &str, command: &str) -> Result<(), String> {
+    eprintln!("route=fallback engine=radare2 command={command}");
+
+    let output = R2FallbackExecutor::default()
+        .execute(path, command)
+        .map_err(|error| format!("radare2 fallback failed: {error:?}"))?;
+
+    {
+        let stdout = io::stdout();
+        let mut handle = stdout.lock();
+        handle
+            .write_all(&output.stdout)
+            .map_err(|error| format!("failed to forward radare2 stdout: {error}"))?;
+        handle
+            .flush()
+            .map_err(|error| format!("failed to flush radare2 stdout: {error}"))?;
+    }
+
+    {
+        let stderr = io::stderr();
+        let mut handle = stderr.lock();
+        handle
+            .write_all(&output.stderr)
+            .map_err(|error| format!("failed to forward radare2 stderr: {error}"))?;
+        handle
+            .flush()
+            .map_err(|error| format!("failed to flush radare2 stderr: {error}"))?;
+    }
+
+    if output.timed_out {
+        return Err("radare2 fallback timed out".to_string());
+    }
+
+    if output.exit_code != Some(0) {
+        return Err(format!(
+            "radare2 fallback exited with status {:?}",
+            output.exit_code
+        ));
+    }
+
+    Ok(())
+}
+
+fn require_no_extra<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+    command: &str,
+) -> Result<(), String> {
+    if parts.next().is_some() {
+        return Err(format!("{command} does not accept routed arguments"));
+    }
+    Ok(())
+}
+
+fn route_optional_address<'a>(
+    path: &str,
+    mut parts: impl Iterator<Item = &'a str>,
+    json: bool,
+) -> Result<(), String> {
+    let address = parts.next();
+    if parts.next().is_some() {
+        return Err("agf/agfj accept at most one function address".to_string());
+    }
+
+    if json {
+        agf_json(path, address)
+    } else {
+        agf(path, address)
+    }
+}
+
+fn route_optional_minimum<'a>(
+    path: &str,
+    mut parts: impl Iterator<Item = &'a str>,
+    json: bool,
+) -> Result<(), String> {
+    let minimum = parts.next();
+    if parts.next().is_some() {
+        return Err("izz/izzj accept at most one minimum length".to_string());
+    }
+
+    if json {
+        izz_json(path, minimum)
+    } else {
+        izz(path, minimum)
+    }
+}
+
+fn route_pattern<'a>(
+    path: &str,
+    parts: impl Iterator<Item = &'a str>,
+    json: bool,
+) -> Result<(), String> {
+    let pattern = parts.collect::<String>();
+    if pattern.is_empty() {
+        return Err("/x and /xj require a hexadecimal pattern".to_string());
+    }
+
+    if json {
+        search_bytes_json(path, &pattern)
+    } else {
+        search_bytes(path, &pattern)
     }
 }
 
