@@ -51,13 +51,12 @@ pub fn find_bytes(image: &BinaryImage, needle: &[u8]) -> Vec<SearchHit> {
     let mut hits: Vec<SearchHit> = image
         .segments
         .par_iter()
-        .map(|segment| {
+        .flat_map(|segment| {
             let Some(bytes) = segment_bytes(image, segment.file_offset, segment.file_size) else {
                 return Vec::new();
             };
             engine.find_all(segment.address, bytes, needle)
         })
-        .flatten()
         .collect();
 
     hits.sort();
@@ -86,7 +85,7 @@ pub fn extract_strings(image: &BinaryImage, min_chars: usize) -> Vec<ExtractedSt
     let mut strings: Vec<ExtractedString> = image
         .segments
         .par_iter()
-        .map(|segment| {
+        .flat_map(|segment| {
             let Some(bytes) = segment_bytes(image, segment.file_offset, segment.file_size) else {
                 return Vec::new();
             };
@@ -96,7 +95,6 @@ pub fn extract_strings(image: &BinaryImage, min_chars: usize) -> Vec<ExtractedSt
             extract_utf16le(segment.address, bytes, min_chars, &mut local);
             local
         })
-        .flatten()
         .collect();
 
     strings.sort();

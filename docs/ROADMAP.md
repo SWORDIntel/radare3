@@ -24,7 +24,7 @@
 - [x] call/xref extraction
 - [x] ASCII and UTF-16LE strings
 - [x] CLI binary info and single-instruction decode
-- [x] CLI `afl`, `agf`, and `izz`-style commands
+- [x] CLI `afl`, `agf`, `izz`, and `/x`-style commands
 
 ## Phase 2 — Performance
 
@@ -36,9 +36,12 @@
 - [x] deterministic wave merge
 - [x] dense visited-address structures with sparse fallback
 - [x] sequential-vs-parallel differential gate
-- [ ] SIMD literal/string search
-- [ ] reproducible benchmark corpus
-- [ ] benchmark result storage / regression gate
+- [x] SIMD-backed literal search via memchr
+- [x] parallel deterministic string extraction
+- [x] reproducible source-built benchmark corpus
+- [x] hyperfine JSON result storage + metadata
+- [x] >5% median regression checker
+- [ ] first committed hardware-specific benchmark baseline
 - [ ] address lookup acceleration for very high segment-count images
 
 ## Phase 3 — Persistence and compatibility
