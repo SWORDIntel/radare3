@@ -854,12 +854,7 @@ const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
     }
 }
 
-fn hexdump(
-    path: &str,
-    requested: &str,
-    length: Option<&str>,
-    json: bool,
-) -> Result<(), String> {
+fn hexdump(path: &str, requested: &str, length: Option<&str>, json: bool) -> Result<(), String> {
     let image = load(path)?;
     let address = parse_address(requested)?;
     let length = parse_length(length)?;
