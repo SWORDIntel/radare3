@@ -1,9 +1,13 @@
 #![forbid(unsafe_code)]
 
-use radare3::analysis::{AnalysisOptions, Analyzer, ParallelAnalyzer, RecursiveAnalyzer};
+use radare3::analysis::{AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer};
+use radare3::cache::{
+    AnalysisCache, AnalysisSnapshot, CacheError, CacheIdentity, CacheKey, FileCache,
+    analysis_options_fingerprint,
+};
 use radare3::arch::Decoder;
-use radare3::arch_x86::IcedX86Decoder;
-use radare3::loader::{GoblinLoader, Loader};
+use radare3::arch_x86::{DECODER_SEMANTICS_VERSION, IcedX86Decoder};
+use radare3::loader::{GoblinLoader, LOADER_SEMANTICS_VERSION, Loader};
 use radare3::search::{StringEncoding, extract_strings, find_bytes};
 use radare3::types::{Address, Architecture};
 
@@ -36,6 +40,10 @@ fn main() {
             Some(path) => afl(&path, true),
             None => Err("afl-seq requires a file path".to_string()),
         },
+        Some("afl-cache") => match args.next() {
+            Some(path) => afl_cached(&path, args.next().as_deref()),
+            None => Err("afl-cache requires a file path".to_string()),
+        },
         Some("agf") => match args.next() {
             Some(path) => agf(&path, args.next().as_deref()),
             None => Err("agf requires a file path".to_string()),
@@ -63,7 +71,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -161,6 +169,81 @@ fn afl(path: &str, sequential: bool) -> Result<(), String> {
         analyze_parallel(&image)?
     };
 
+    print_afl_result(
+        &result,
+        if sequential { "sequential" } else { "parallel" },
+    );
+
+    Ok(())
+}
+
+fn afl_cached(path: &str, cache_dir: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+
+    let options = AnalysisOptions::default();
+    let string_min_chars = 4;
+    let fingerprint = analysis_options_fingerprint(&options, string_min_chars)
+        .map_err(|error| format!("cache fingerprint failed: {error:?}"))?;
+    let key = CacheKey::derive(&CacheIdentity::new(
+        image.bytes(),
+        LOADER_SEMANTICS_VERSION,
+        DECODER_SEMANTICS_VERSION,
+        &fingerprint,
+    ));
+    let cache = FileCache::new(cache_dir.unwrap_or(".radare3/cache"));
+
+    let snapshot = match cache.get(key) {
+        Ok(Some(payload)) => match AnalysisSnapshot::decode(&payload) {
+            Ok(snapshot) => {
+                eprintln!("cache=hit key={key}");
+                snapshot
+            }
+            Err(CacheError::Corrupt | CacheError::IncompatibleVersion | CacheError::TooLarge) => {
+                cache
+                    .remove(key)
+                    .map_err(|error| format!("failed to discard invalid cache entry: {error:?}"))?;
+                build_cache_snapshot(&image, &options, string_min_chars, &cache, key)?
+            }
+            Err(CacheError::Io) => return Err("failed to decode cache payload".to_string()),
+        },
+        Ok(None) => build_cache_snapshot(&image, &options, string_min_chars, &cache, key)?,
+        Err(CacheError::Corrupt | CacheError::IncompatibleVersion | CacheError::TooLarge) => {
+            cache
+                .remove(key)
+                .map_err(|error| format!("failed to discard invalid cache entry: {error:?}"))?;
+            build_cache_snapshot(&image, &options, string_min_chars, &cache, key)?
+        }
+        Err(CacheError::Io) => return Err("failed to read cache entry".to_string()),
+    };
+
+    print_afl_result(&snapshot.analysis, "cache");
+    Ok(())
+}
+
+fn build_cache_snapshot(
+    image: &radare3::image::BinaryImage,
+    options: &AnalysisOptions,
+    string_min_chars: usize,
+    cache: &FileCache,
+    key: CacheKey,
+) -> Result<AnalysisSnapshot, String> {
+    let analysis = ParallelAnalyzer::new(IcedX86Decoder::x86_64())
+        .analyze(image, options)
+        .map_err(|error| format!("analysis failed: {error:?}"))?;
+    let strings = extract_strings(image, string_min_chars);
+    let snapshot = AnalysisSnapshot::new(analysis, strings);
+    let payload = snapshot
+        .encode()
+        .map_err(|error| format!("cache encoding failed: {error:?}"))?;
+    cache
+        .put(key, &payload)
+        .map_err(|error| format!("cache write failed: {error:?}"))?;
+    eprintln!("cache=miss key={key}");
+    Ok(snapshot)
+}
+
+fn print_afl_result(result: &AnalysisResult, mode: &str) {
     for function in result.cfg.functions.values() {
         println!(
             "{} blocks={} {}",
@@ -172,14 +255,12 @@ fn afl(path: &str, sequential: bool) -> Result<(), String> {
 
     eprintln!(
         "mode={} fidelity={:?} functions={} blocks={} xrefs={}",
-        if sequential { "sequential" } else { "parallel" },
+        mode,
         result.fidelity,
         result.cfg.functions.len(),
         result.cfg.blocks.len(),
         result.xrefs.len()
     );
-
-    Ok(())
 }
 
 fn agf(path: &str, requested: Option<&str>) -> Result<(), String> {

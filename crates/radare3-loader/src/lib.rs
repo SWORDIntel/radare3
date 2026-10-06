@@ -14,6 +14,8 @@ use radare3_image::{
 };
 use radare3_types::{Address, Architecture, BinaryFormat};
 
+pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v1";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadError {
     Malformed(String),

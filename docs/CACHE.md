@@ -75,17 +75,33 @@ A cache miss is mandatory when any of the following changes:
 - analysis schema
 - relevant analysis options
 
+## Analysis payload
+
+`AnalysisSnapshot` now has a deterministic bounded binary codec for:
+
+- functions and names
+- basic blocks and successors
+- CFG membership
+- xrefs
+- fidelity
+- extracted strings
+
+Decoding rejects duplicate IDs, invalid enum tags, dangling block references, oversized collections/strings, malformed UTF-8, invalid block ranges, and trailing bytes.
+
+The CLI command:
+
+```sh
+radare3 afl-cache <file> [cache-dir]
+```
+
+derives a key from binary contents, loader/decoder semantic versions, analysis options, and the string threshold. Invalid cache entries are discarded and rebuilt rather than treated as authoritative.
+
+Cold-vs-warm timing:
+
+```sh
+RUNS=20 ./scripts/bench-cache.sh
+```
+
 ## Next step
 
-Define the deterministic versioned analysis payload containing:
-
-- binary metadata
-- function seeds
-- functions and blocks
-- CFG edges
-- xrefs
-- strings
-- names
-- fidelity
-
-Then connect the payload to `FileCache` and add cold-vs-warm reopen benchmarks.
+Move cached reopening into the default analysis path after baseline measurements establish the overhead/benefit, then expand the payload with normalized binary metadata and function-seed provenance.
