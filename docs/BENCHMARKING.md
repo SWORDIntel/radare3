@@ -152,3 +152,19 @@ session:  printf 'afl\npdf\nq\n' | radare3 session <file>
 The one-shot path maps and analyzes the binary independently for each command. The session path maps once and reuses one in-memory analysis result.
 
 This benchmark measures the end-to-end workflow benefit of reuse. It is not a substitute for the analysis benchmark, and no speedup claim should be made until the same stable-machine requirements are met.
+
+
+## Repeated session query benchmark
+
+Secondary indexes are measured with a dedicated repeated-query workload rather than inferred from broad session timings:
+
+```sh
+RUNS=20 QUERY_REPEATS=100 ./scripts/bench-session-queries.sh
+```
+
+For each target it records two independent hyperfine result sets:
+
+- `session-function-queries`: repeated `afij` + `agfj`
+- `session-xref-queries`: repeated `axtj` + `axfj`
+
+Each measured session performs analysis once, then exercises the same immutable analysis repeatedly. This makes before/after index changes comparable without pretending function and xref queries are equivalent workloads.

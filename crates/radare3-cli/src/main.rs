@@ -525,6 +525,15 @@ fn render_pdf(
     json: bool,
 ) -> Result<(), String> {
     let function = resolve_function(image, result, requested)?;
+    render_pdf_function(image, result, function, json)
+}
+
+fn render_pdf_function(
+    image: &radare3::image::BinaryImage,
+    result: &AnalysisResult,
+    function: &radare3::cfg::Function,
+    json: bool,
+) -> Result<(), String> {
     let decoder = IcedX86Decoder::x86_64();
 
     if json {
@@ -1206,6 +1215,7 @@ fn parse_length(value: Option<&str>) -> Result<usize, String> {
 struct SessionState {
     image: radare3::image::BinaryImage,
     analysis: Option<AnalysisResult>,
+    function_index: Option<radare3::cfg::FunctionIndex>,
     xref_index: Option<radare3::xref::XrefIndex>,
     analysis_options: AnalysisOptions,
     seek: Address,
@@ -1229,6 +1239,26 @@ impl SessionState {
         self.analysis
             .as_ref()
             .ok_or_else(|| "session analysis is unavailable".to_string())
+    }
+
+    fn ensure_function_index(&mut self) -> Result<(), String> {
+        self.ensure_analysis()?;
+
+        if self.function_index.is_some() {
+            eprintln!("session-function-index=hit");
+            return Ok(());
+        }
+
+        let index = radare3::cfg::FunctionIndex::build(&self.analysis()?.cfg);
+        self.function_index = Some(index);
+        eprintln!("session-function-index=miss");
+        Ok(())
+    }
+
+    fn function_index(&self) -> Result<&radare3::cfg::FunctionIndex, String> {
+        self.function_index
+            .as_ref()
+            .ok_or_else(|| "session function index is unavailable".to_string())
     }
 
     fn ensure_xref_index(&mut self) -> Result<(), String> {
@@ -1259,6 +1289,7 @@ fn session(path: &str) -> Result<(), String> {
     let mut state = SessionState {
         image,
         analysis: None,
+        function_index: None,
         xref_index: None,
         analysis_options,
         seek,
@@ -1325,17 +1356,27 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
         "afi" | "afij" => {
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
-            state.ensure_analysis()?;
+            state.ensure_function_index()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
-            render_session_afi(state.analysis()?, address, head == "afij")?;
+            render_session_afi(
+                state.analysis()?,
+                state.function_index()?,
+                address,
+                head == "afij",
+            )?;
             Ok(true)
         }
         "agf" | "agfj" => {
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
-            state.ensure_analysis()?;
+            state.ensure_function_index()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
-            render_session_agf(state.analysis()?, address, head == "agfj")?;
+            render_session_agf(
+                state.analysis()?,
+                state.function_index()?,
+                address,
+                head == "agfj",
+            )?;
             Ok(true)
         }
         "axt" | "axtj" | "axf" | "axfj" => {
@@ -1356,16 +1397,13 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
         "pdf" | "pdfj" => {
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
-            state.ensure_analysis()?;
-            let default_address;
-            let requested = match requested.as_deref() {
-                Some(address) => Some(address),
-                None => {
-                    default_address = format!("0x{:x}", state.seek.0);
-                    Some(default_address.as_str())
-                }
-            };
-            render_pdf(&state.image, state.analysis()?, requested, head == "pdfj")?;
+            state.ensure_function_index()?;
+            let address = session_requested_address(state.seek, requested.as_deref())?;
+            let function = state
+                .function_index()?
+                .function(&state.analysis()?.cfg, address)
+                .ok_or_else(|| format!("no discovered function at {address}"))?;
+            render_pdf_function(&state.image, state.analysis()?, function, head == "pdfj")?;
             Ok(true)
         }
         "info" | "ij" | "iS" | "iSj" | "is" | "isj" | "ii" | "iij" => {
@@ -1426,20 +1464,23 @@ fn render_session_afl_json(result: &AnalysisResult) -> Result<(), String> {
     }))
 }
 
-fn resolve_session_function(
-    result: &AnalysisResult,
+fn resolve_session_function<'a>(
+    result: &'a AnalysisResult,
+    index: &radare3::cfg::FunctionIndex,
     address: Address,
-) -> Result<&radare3::cfg::Function, String> {
-    result
-        .cfg
-        .functions
-        .values()
-        .find(|function| function.entry == address)
+) -> Result<&'a radare3::cfg::Function, String> {
+    index
+        .function(&result.cfg, address)
         .ok_or_else(|| format!("no discovered function at {address}"))
 }
 
-fn render_session_afi(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
-    let function = resolve_session_function(result, address)?;
+fn render_session_afi(
+    result: &AnalysisResult,
+    index: &radare3::cfg::FunctionIndex,
+    address: Address,
+    json: bool,
+) -> Result<(), String> {
+    let function = resolve_session_function(result, index, address)?;
     let (incoming, outgoing) = function_xref_counts(result, function);
 
     if json {
@@ -1468,8 +1509,13 @@ fn render_session_afi(result: &AnalysisResult, address: Address, json: bool) -> 
     Ok(())
 }
 
-fn render_session_agf(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
-    let function = resolve_session_function(result, address)?;
+fn render_session_agf(
+    result: &AnalysisResult,
+    index: &radare3::cfg::FunctionIndex,
+    address: Address,
+    json: bool,
+) -> Result<(), String> {
+    let function = resolve_session_function(result, index, address)?;
 
     if json {
         let blocks = function

@@ -19,3 +19,16 @@ After an `O(n log n)` build over `n` functions, entry lookup is a deterministic 
 ## Persistence
 
 The index is derived state and is not part of the analysis cache schema. Session mode may build it lazily and discard it when the session closes.
+
+
+## Session integration
+
+Session mode builds the function index lazily. The first `afi/afij/agf/agfj/pdf/pdfj` command that needs entry-address resolution emits:
+
+```text
+session-function-index=miss
+```
+
+Later function-address queries emit `session-function-index=hit` and reuse the same derived index.
+
+Commands that only list functions or inspect metadata do not pay the index-build cost.

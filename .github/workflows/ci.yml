@@ -98,6 +98,8 @@ jobs:
 
           test "$(grep -c 'session-analysis=miss' /tmp/r3-session.err)" -eq 1
           test "$(grep -c 'session-analysis=hit' /tmp/r3-session.err)" -eq 5
+          test "$(grep -c 'session-function-index=miss' /tmp/r3-session.err)" -eq 1
+          test "$(grep -c 'session-function-index=hit' /tmp/r3-session.err)" -eq 2
           test "$(grep -c 'session-xref-index=miss' /tmp/r3-session.err)" -eq 1
           test "$(grep -c 'session-xref-index=hit' /tmp/r3-session.err)" -eq 1
           grep -q 'mode=session' /tmp/r3-session.err
@@ -111,6 +113,7 @@ jobs:
           bash -n scripts/run-benchmark-campaign.sh
           bash -n scripts/profile-analysis.sh
           bash -n scripts/bench-session.sh
+          bash -n scripts/bench-session-queries.sh
           python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py scripts/summarize-benchmark-campaign.py
       - name: Benchmark scaling summary self-test
         run: |
