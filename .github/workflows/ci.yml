@@ -92,11 +92,15 @@ jobs:
           r3="./target/debug/radare3"
           target=".radare3/corpus/r3bench-o0"
 
-          printf 'afl\npdf\ns\npx 16\nij\nq\n' | "$r3" session "$target"             > /tmp/r3-session.out 2> /tmp/r3-session.err
+          printf 'afl\nafij\nagfj\naxtj\naxfj\npdf\ns\npx 16\nij\nq\n' | "$r3" session "$target" > /tmp/r3-session.out 2> /tmp/r3-session.err
 
           test "$(grep -c 'session-analysis=miss' /tmp/r3-session.err)" -eq 1
-          test "$(grep -c 'session-analysis=hit' /tmp/r3-session.err)" -eq 1
+          test "$(grep -c 'session-analysis=hit' /tmp/r3-session.err)" -eq 5
           grep -q 'mode=session' /tmp/r3-session.err
+          grep -q '"schema":"radare3.afi.v1"' /tmp/r3-session.out
+          grep -q '"schema":"radare3.agf.v1"' /tmp/r3-session.out
+          grep -q '"schema":"radare3.axt.v1"' /tmp/r3-session.out
+          grep -q '"schema":"radare3.axf.v1"' /tmp/r3-session.out
           grep -q '"schema":"radare3.info.v1"' /tmp/r3-session.out
       - name: Benchmark tooling syntax
         run: |
