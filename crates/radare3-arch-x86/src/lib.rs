@@ -1,10 +1,19 @@
 #![forbid(unsafe_code)]
 
-use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FlowControl, OpKind};
+use iced_x86::{
+    Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind,
+};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
 pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v2-data-xrefs";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisassembledInstruction {
+    pub address: Address,
+    pub length: u8,
+    pub text: String,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IcedX86Decoder {
@@ -18,6 +27,42 @@ impl IcedX86Decoder {
 
     pub const fn x86_64() -> Self {
         Self { bitness: 64 }
+    }
+}
+
+impl IcedX86Decoder {
+    pub fn disassemble(
+        &self,
+        address: Address,
+        bytes: &[u8],
+    ) -> Result<Vec<DisassembledInstruction>, DecodeError> {
+        let mut decoder =
+            IcedDecoderCore::with_ip(self.bitness, bytes, address.0, DecoderOptions::NONE);
+        let mut formatter = FastFormatter::new();
+        formatter
+            .options_mut()
+            .set_space_after_operand_separator(true);
+        let mut output = String::new();
+        let mut instructions = Vec::new();
+
+        while decoder.can_decode() {
+            let instruction = decoder.decode();
+            if instruction.is_invalid() {
+                return Err(DecodeError::InvalidInstruction);
+            }
+
+            let length =
+                u8::try_from(instruction.len()).map_err(|_| DecodeError::InvalidInstruction)?;
+            output.clear();
+            formatter.format(&instruction, &mut output);
+            instructions.push(DisassembledInstruction {
+                address: Address(instruction.ip()),
+                length,
+                text: output.clone(),
+            });
+        }
+
+        Ok(instructions)
     }
 }
 
@@ -117,6 +162,36 @@ mod tests {
         assert_eq!(decoded.data_target, Some(Address(0x40223b)));
 
         Ok(())
+    }
+
+    #[test]
+    fn fast_disassembly_preserves_addresses_lengths_and_text() -> Result<(), Box<dyn std::error::Error>> {
+        let instructions = IcedX86Decoder::x86_64()
+            .disassemble(
+                Address(0x401000),
+                &[0x55, 0x48, 0x89, 0xe5, 0xc3],
+            )
+            .map_err(|error| format!("disassembly failed: {error:?}"))?;
+
+        assert_eq!(instructions.len(), 3);
+        assert_eq!(instructions[0].address, Address(0x401000));
+        assert_eq!(instructions[0].length, 1);
+        assert_eq!(instructions[0].text, "push rbp");
+        assert_eq!(instructions[1].address, Address(0x401001));
+        assert_eq!(instructions[1].length, 3);
+        assert_eq!(instructions[1].text, "mov rbp, rsp");
+        assert_eq!(instructions[2].address, Address(0x401004));
+        assert_eq!(instructions[2].text, "ret");
+
+        Ok(())
+    }
+
+    #[test]
+    fn disassembly_rejects_invalid_instruction() {
+        assert_eq!(
+            IcedX86Decoder::x86_64().disassemble(Address(0x401000), &[0x0f]),
+            Err(DecodeError::InvalidInstruction)
+        );
     }
 
     #[test]
