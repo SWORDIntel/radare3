@@ -64,8 +64,34 @@ The executor:
 - refuses native and unsupported commands before spawning anything,
 - reports spawn/I/O/thread failures separately.
 
-The executor exists at the compatibility-library layer. The CLI does not automatically fall back yet; that remains an explicit integration decision so fallback is never invisible.
+## Explicit CLI routing
 
-## Next step
+Fallback is exposed only through an explicit routing command:
 
-Expose explicit CLI fallback/routing mode. Native JSON renderers now cover the first JSON command set; remaining fallback commands can be replaced one at a time as their native engines mature.
+```sh
+radare3 route <file> <r2-style-command...>
+```
+
+The router classifies the command first:
+
+- `Native` commands execute inside radare3.
+- `Fallback` commands invoke `R2FallbackExecutor`.
+- `Unsupported` commands fail without spawning anything.
+
+Fallback is always announced on stderr with `route=fallback engine=radare2`. Normal radare3 commands never silently invoke radare2.
+
+Native routing currently covers:
+
+```text
+afl
+aflj
+agf
+agfj
+izz
+izzj
+/x
+/xj
+ij
+```
+
+The remaining fallback surface can be replaced one command at a time as native engines mature.
