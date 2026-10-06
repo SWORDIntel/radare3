@@ -24,6 +24,7 @@ version = "0.0.1"
 rust-version = "1.85"
 
 [workspace.dependencies]
+blake3 = "1.8.7"
 goblin = "0.10.7"
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"] }
 memmap2 = "0.9"
