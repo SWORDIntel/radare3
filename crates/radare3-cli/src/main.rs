@@ -1146,9 +1146,7 @@ fn env_limit(name: &str) -> Result<Option<u64>, String> {
             Ok(Some(value))
         }
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{name} contains non-Unicode data"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} contains non-Unicode data")),
     }
 }
 
