@@ -4,6 +4,8 @@ use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FlowControl, OpKind};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
+pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v1";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IcedX86Decoder {
     bitness: u32,

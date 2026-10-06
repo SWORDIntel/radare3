@@ -7,6 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 blake3.workspace = true
+radare3-analysis.workspace = true
+radare3-cfg.workspace = true
+radare3-search.workspace = true
+radare3-types.workspace = true
+radare3-xref.workspace = true
 
 [lints]
 workspace = true

@@ -1,14 +1,26 @@
 #![forbid(unsafe_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use radare3_analysis::{AnalysisOptions, AnalysisResult};
+use radare3_cfg::{BasicBlock, ControlFlowGraph, Function};
+use radare3_search::{ExtractedString, StringEncoding};
+use radare3_types::{Address, BlockId, Fidelity, FunctionId, XrefId};
+use radare3_xref::{Xref, XrefKind};
+
 const CACHE_KEY_DOMAIN: &[u8] = b"radare3-cache-key-v1";
 const CACHE_FILE_MAGIC: &[u8; 8] = b"R3CACHE\0";
 const CACHE_FILE_VERSION: u32 = 1;
+const ANALYSIS_PAYLOAD_MAGIC: &[u8; 8] = b"R3ANLYS\0";
+const ANALYSIS_PAYLOAD_VERSION: u32 = 1;
+const MAX_COLLECTION_ITEMS: u32 = 10_000_000;
+const MAX_STRING_BYTES: u32 = 16 * 1024 * 1024;
+
 pub const CURRENT_ANALYSIS_SCHEMA: u32 = 1;
 pub const DEFAULT_MAX_CACHE_PAYLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -97,6 +109,7 @@ pub trait AnalysisCache: Send + Sync {
     fn contains(&self, key: CacheKey) -> Result<bool, CacheError>;
     fn get(&self, key: CacheKey) -> Result<Option<Vec<u8>>, CacheError>;
     fn put(&self, key: CacheKey, payload: &[u8]) -> Result<(), CacheError>;
+    fn remove(&self, key: CacheKey) -> Result<(), CacheError>;
 }
 
 #[derive(Clone, Debug)]
@@ -157,7 +170,7 @@ impl AnalysisCache for FileCache {
             return Err(CacheError::Corrupt);
         }
 
-        let version = read_u32(&mut file)?;
+        let version = read_u32_io(&mut file)?;
         if version != CACHE_FILE_VERSION {
             return Err(CacheError::IncompatibleVersion);
         }
@@ -168,7 +181,7 @@ impl AnalysisCache for FileCache {
             return Err(CacheError::Corrupt);
         }
 
-        let payload_len = read_u64(&mut file)?;
+        let payload_len = read_u64_io(&mut file)?;
         if payload_len > self.max_payload_bytes {
             return Err(CacheError::TooLarge);
         }
@@ -240,6 +253,387 @@ impl AnalysisCache for FileCache {
             }
         }
     }
+
+    fn remove(&self, key: CacheKey) -> Result<(), CacheError> {
+        match fs::remove_file(self.path_for(key)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnalysisSnapshot {
+    pub analysis: AnalysisResult,
+    pub strings: Vec<ExtractedString>,
+}
+
+impl AnalysisSnapshot {
+    pub fn new(analysis: AnalysisResult, strings: Vec<ExtractedString>) -> Self {
+        Self { analysis, strings }
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, CacheError> {
+        let mut out = Vec::new();
+        out.extend_from_slice(ANALYSIS_PAYLOAD_MAGIC);
+        push_u32(&mut out, ANALYSIS_PAYLOAD_VERSION);
+        out.push(encode_fidelity(self.analysis.fidelity));
+
+        push_count(&mut out, self.analysis.cfg.functions.len())?;
+        for function in self.analysis.cfg.functions.values() {
+            push_u32(&mut out, function.id.0);
+            push_u64(&mut out, function.entry.0);
+            push_count(&mut out, function.blocks.len())?;
+            for block in &function.blocks {
+                push_u32(&mut out, block.0);
+            }
+            push_optional_string(&mut out, function.name.as_deref())?;
+        }
+
+        push_count(&mut out, self.analysis.cfg.blocks.len())?;
+        for block in self.analysis.cfg.blocks.values() {
+            push_u32(&mut out, block.id.0);
+            push_u64(&mut out, block.start.0);
+            push_u64(&mut out, block.end.0);
+            push_count(&mut out, block.successors.len())?;
+            for successor in &block.successors {
+                push_u32(&mut out, successor.0);
+            }
+        }
+
+        push_count(&mut out, self.analysis.xrefs.len())?;
+        for xref in &self.analysis.xrefs {
+            push_u32(&mut out, xref.id.0);
+            push_u64(&mut out, xref.from.0);
+            push_u64(&mut out, xref.to.0);
+            out.push(encode_xref_kind(xref.kind));
+        }
+
+        push_count(&mut out, self.strings.len())?;
+        for string in &self.strings {
+            push_u64(&mut out, string.address.0);
+            out.push(encode_string_encoding(string.encoding));
+            push_string(&mut out, &string.value)?;
+        }
+
+        Ok(out)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheError> {
+        let mut reader = SliceReader::new(bytes);
+        if reader.take(ANALYSIS_PAYLOAD_MAGIC.len())? != ANALYSIS_PAYLOAD_MAGIC {
+            return Err(CacheError::Corrupt);
+        }
+
+        if reader.read_u32()? != ANALYSIS_PAYLOAD_VERSION {
+            return Err(CacheError::IncompatibleVersion);
+        }
+
+        let fidelity = decode_fidelity(reader.read_u8()?)?;
+
+        let function_count = reader.read_count()?;
+        let mut functions = BTreeMap::new();
+        for _ in 0..function_count {
+            let id = FunctionId(reader.read_u32()?);
+            let entry = Address(reader.read_u64()?);
+            let block_count = reader.read_count()?;
+            let mut blocks = Vec::with_capacity(block_count);
+            for _ in 0..block_count {
+                blocks.push(BlockId(reader.read_u32()?));
+            }
+            let name = reader.read_optional_string()?;
+
+            if functions
+                .insert(
+                    id,
+                    Function {
+                        id,
+                        entry,
+                        blocks,
+                        name,
+                    },
+                )
+                .is_some()
+            {
+                return Err(CacheError::Corrupt);
+            }
+        }
+
+        let basic_block_count = reader.read_count()?;
+        let mut blocks = BTreeMap::new();
+        for _ in 0..basic_block_count {
+            let id = BlockId(reader.read_u32()?);
+            let start = Address(reader.read_u64()?);
+            let end = Address(reader.read_u64()?);
+            let successor_count = reader.read_count()?;
+            let mut successors = Vec::with_capacity(successor_count);
+            for _ in 0..successor_count {
+                successors.push(BlockId(reader.read_u32()?));
+            }
+
+            if blocks
+                .insert(
+                    id,
+                    BasicBlock {
+                        id,
+                        start,
+                        end,
+                        successors,
+                    },
+                )
+                .is_some()
+            {
+                return Err(CacheError::Corrupt);
+            }
+        }
+
+        validate_cfg_references(&functions, &blocks)?;
+
+        let xref_count = reader.read_count()?;
+        let mut xrefs = Vec::with_capacity(xref_count);
+        let mut xref_ids = BTreeSet::new();
+        for _ in 0..xref_count {
+            let id = XrefId(reader.read_u32()?);
+            if !xref_ids.insert(id) {
+                return Err(CacheError::Corrupt);
+            }
+            xrefs.push(Xref {
+                id,
+                from: Address(reader.read_u64()?),
+                to: Address(reader.read_u64()?),
+                kind: decode_xref_kind(reader.read_u8()?)?,
+            });
+        }
+
+        let string_count = reader.read_count()?;
+        let mut strings = Vec::with_capacity(string_count);
+        for _ in 0..string_count {
+            strings.push(ExtractedString {
+                address: Address(reader.read_u64()?),
+                encoding: decode_string_encoding(reader.read_u8()?)?,
+                value: reader.read_string()?,
+            });
+        }
+
+        if !reader.is_finished() {
+            return Err(CacheError::Corrupt);
+        }
+
+        Ok(Self {
+            analysis: AnalysisResult {
+                cfg: ControlFlowGraph { functions, blocks },
+                xrefs,
+                fidelity,
+            },
+            strings,
+        })
+    }
+}
+
+pub fn analysis_options_fingerprint(
+    options: &AnalysisOptions,
+    string_min_chars: usize,
+) -> Result<Vec<u8>, CacheError> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"r3-analysis-options-v1");
+    out.push(u8::from(options.deterministic));
+
+    match options.max_instructions {
+        Some(limit) => {
+            out.push(1);
+            push_u64(&mut out, limit);
+        }
+        None => out.push(0),
+    }
+
+    let mut entrypoints = options.entrypoints.clone();
+    entrypoints.sort();
+    entrypoints.dedup();
+    push_count(&mut out, entrypoints.len())?;
+    for entry in entrypoints {
+        push_u64(&mut out, entry.0);
+    }
+
+    let min_chars = u64::try_from(string_min_chars).map_err(|_| CacheError::TooLarge)?;
+    push_u64(&mut out, min_chars);
+    Ok(out)
+}
+
+fn validate_cfg_references(
+    functions: &BTreeMap<FunctionId, Function>,
+    blocks: &BTreeMap<BlockId, BasicBlock>,
+) -> Result<(), CacheError> {
+    for function in functions.values() {
+        if function.blocks.iter().any(|id| !blocks.contains_key(id)) {
+            return Err(CacheError::Corrupt);
+        }
+    }
+
+    for block in blocks.values() {
+        if block.successors.iter().any(|id| !blocks.contains_key(id)) {
+            return Err(CacheError::Corrupt);
+        }
+        if block.end < block.start {
+            return Err(CacheError::Corrupt);
+        }
+    }
+
+    Ok(())
+}
+
+fn push_count(out: &mut Vec<u8>, count: usize) -> Result<(), CacheError> {
+    let count = u32::try_from(count).map_err(|_| CacheError::TooLarge)?;
+    if count > MAX_COLLECTION_ITEMS {
+        return Err(CacheError::TooLarge);
+    }
+    push_u32(out, count);
+    Ok(())
+}
+
+fn push_optional_string(out: &mut Vec<u8>, value: Option<&str>) -> Result<(), CacheError> {
+    match value {
+        Some(value) => {
+            out.push(1);
+            push_string(out, value)
+        }
+        None => {
+            out.push(0);
+            Ok(())
+        }
+    }
+}
+
+fn push_string(out: &mut Vec<u8>, value: &str) -> Result<(), CacheError> {
+    let len = u32::try_from(value.len()).map_err(|_| CacheError::TooLarge)?;
+    if len > MAX_STRING_BYTES {
+        return Err(CacheError::TooLarge);
+    }
+    push_u32(out, len);
+    out.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+const fn encode_fidelity(value: Fidelity) -> u8 {
+    match value {
+        Fidelity::Canonical => 0,
+        Fidelity::Heuristic => 1,
+        Fidelity::Incomplete => 2,
+    }
+}
+
+fn decode_fidelity(value: u8) -> Result<Fidelity, CacheError> {
+    match value {
+        0 => Ok(Fidelity::Canonical),
+        1 => Ok(Fidelity::Heuristic),
+        2 => Ok(Fidelity::Incomplete),
+        _ => Err(CacheError::Corrupt),
+    }
+}
+
+const fn encode_xref_kind(value: XrefKind) -> u8 {
+    match value {
+        XrefKind::Call => 0,
+        XrefKind::Code => 1,
+        XrefKind::Data => 2,
+    }
+}
+
+fn decode_xref_kind(value: u8) -> Result<XrefKind, CacheError> {
+    match value {
+        0 => Ok(XrefKind::Call),
+        1 => Ok(XrefKind::Code),
+        2 => Ok(XrefKind::Data),
+        _ => Err(CacheError::Corrupt),
+    }
+}
+
+const fn encode_string_encoding(value: StringEncoding) -> u8 {
+    match value {
+        StringEncoding::Ascii => 0,
+        StringEncoding::Utf16Le => 1,
+    }
+}
+
+fn decode_string_encoding(value: u8) -> Result<StringEncoding, CacheError> {
+    match value {
+        0 => Ok(StringEncoding::Ascii),
+        1 => Ok(StringEncoding::Utf16Le),
+        _ => Err(CacheError::Corrupt),
+    }
+}
+
+struct SliceReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> SliceReader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], CacheError> {
+        let end = self.offset.checked_add(len).ok_or(CacheError::Corrupt)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(CacheError::Corrupt)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, CacheError> {
+        Ok(*self.take(1)?.first().ok_or(CacheError::Corrupt)?)
+    }
+
+    fn read_u32(&mut self) -> Result<u32, CacheError> {
+        let bytes: [u8; 4] = self.take(4)?.try_into().map_err(|_| CacheError::Corrupt)?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, CacheError> {
+        let bytes: [u8; 8] = self.take(8)?.try_into().map_err(|_| CacheError::Corrupt)?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn read_count(&mut self) -> Result<usize, CacheError> {
+        let count = self.read_u32()?;
+        if count > MAX_COLLECTION_ITEMS {
+            return Err(CacheError::TooLarge);
+        }
+        usize::try_from(count).map_err(|_| CacheError::TooLarge)
+    }
+
+    fn read_optional_string(&mut self) -> Result<Option<String>, CacheError> {
+        match self.read_u8()? {
+            0 => Ok(None),
+            1 => self.read_string().map(Some),
+            _ => Err(CacheError::Corrupt),
+        }
+    }
+
+    fn read_string(&mut self) -> Result<String, CacheError> {
+        let len = self.read_u32()?;
+        if len > MAX_STRING_BYTES {
+            return Err(CacheError::TooLarge);
+        }
+        let len = usize::try_from(len).map_err(|_| CacheError::TooLarge)?;
+        let value = std::str::from_utf8(self.take(len)?).map_err(|_| CacheError::Corrupt)?;
+        Ok(value.to_owned())
+    }
+
+    fn is_finished(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
 }
 
 fn hash_component(hasher: &mut blake3::Hasher, bytes: &[u8]) {
@@ -247,13 +641,13 @@ fn hash_component(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-fn read_u32(reader: &mut impl Read) -> Result<u32, CacheError> {
+fn read_u32_io(reader: &mut impl Read) -> Result<u32, CacheError> {
     let mut bytes = [0_u8; 4];
     reader.read_exact(&mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
 }
 
-fn read_u64(reader: &mut impl Read) -> Result<u64, CacheError> {
+fn read_u64_io(reader: &mut impl Read) -> Result<u64, CacheError> {
     let mut bytes = [0_u8; 8];
     reader.read_exact(&mut bytes)?;
     Ok(u64::from_le_bytes(bytes))
@@ -279,6 +673,42 @@ mod tests {
             std::process::id(),
             name
         ))
+    }
+
+    fn snapshot() -> AnalysisSnapshot {
+        let block = BasicBlock {
+            id: BlockId(0),
+            start: Address(0x1000),
+            end: Address(0x1001),
+            successors: Vec::new(),
+        };
+        let function = Function {
+            id: FunctionId(0),
+            entry: Address(0x1000),
+            blocks: vec![BlockId(0)],
+            name: Some("entry".to_string()),
+        };
+
+        AnalysisSnapshot::new(
+            AnalysisResult {
+                cfg: ControlFlowGraph {
+                    functions: BTreeMap::from([(FunctionId(0), function)]),
+                    blocks: BTreeMap::from([(BlockId(0), block)]),
+                },
+                xrefs: vec![Xref {
+                    id: XrefId(0),
+                    from: Address(0x1000),
+                    to: Address(0x2000),
+                    kind: XrefKind::Call,
+                }],
+                fidelity: Fidelity::Heuristic,
+            },
+            vec![ExtractedString {
+                address: Address(0x3000),
+                encoding: StringEncoding::Ascii,
+                value: "radare3".to_string(),
+            }],
+        )
     }
 
     #[test]
@@ -329,11 +759,45 @@ mod tests {
     }
 
     #[test]
-    fn length_prefixes_prevent_component_ambiguity() {
-        let left = CacheIdentity::new(b"ab", "c", "d", b"ef");
-        let right = CacheIdentity::new(b"a", "bc", "d", b"ef");
+    fn snapshot_round_trips_deterministically() -> Result<(), CacheError> {
+        let snapshot = snapshot();
+        let first = snapshot.encode()?;
+        let second = snapshot.encode()?;
+        assert_eq!(first, second);
+        assert_eq!(AnalysisSnapshot::decode(&first)?, snapshot);
+        Ok(())
+    }
 
-        assert_ne!(CacheKey::derive(&left), CacheKey::derive(&right));
+    #[test]
+    fn snapshot_rejects_trailing_and_corrupt_bytes() -> Result<(), CacheError> {
+        let mut encoded = snapshot().encode()?;
+        encoded.push(0);
+        assert_eq!(AnalysisSnapshot::decode(&encoded), Err(CacheError::Corrupt));
+
+        let mut encoded = snapshot().encode()?;
+        encoded[0] ^= 0xff;
+        assert_eq!(AnalysisSnapshot::decode(&encoded), Err(CacheError::Corrupt));
+        Ok(())
+    }
+
+    #[test]
+    fn options_fingerprint_is_order_independent_for_entrypoints() -> Result<(), CacheError> {
+        let left = AnalysisOptions {
+            entrypoints: vec![Address(2), Address(1), Address(2)],
+            max_instructions: Some(100),
+            deterministic: true,
+        };
+        let right = AnalysisOptions {
+            entrypoints: vec![Address(1), Address(2)],
+            max_instructions: Some(100),
+            deterministic: true,
+        };
+
+        assert_eq!(
+            analysis_options_fingerprint(&left, 4)?,
+            analysis_options_fingerprint(&right, 4)?
+        );
+        Ok(())
     }
 
     #[test]
@@ -353,6 +817,8 @@ mod tests {
         let path = cache.path_for(key);
         fs::write(&path, b"NOTCACHE-corrupt")?;
         assert_eq!(cache.get(key), Err(CacheError::Corrupt));
+        cache.remove(key)?;
+        assert!(!cache.contains(key)?);
 
         let _ = fs::remove_dir_all(root);
         Ok(())
