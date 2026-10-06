@@ -1,107 +1,49 @@
 # Cache architecture
 
-The cache is content-addressed. Paths and modification times are not cache identity.
+The cache is content-addressed and treats persisted data as hostile input.
 
 ## Identity
 
-Current key domain:
+BLAKE3 keys cover binary contents, loader semantics, decoder semantics, analysis schema, and relevant analysis options. Paths and mtimes are not identity.
 
-```text
-radare3-cache-key-v1
-```
+## File envelope
 
-The BLAKE3 key is derived from length-prefixed components:
+The versioned `.r3c` envelope contains magic, file version, cache key, payload length, BLAKE3 payload hash, and the opaque analysis payload.
 
-```text
-binary contents
-loader semantic version
-decoder semantic version
-analysis schema version
-analysis-options fingerprint
-```
+Before allocating payload memory, readers verify:
 
-Length prefixes prevent concatenation ambiguity.
+- declared payload is below the configured maximum,
+- the on-disk file length exactly matches header + declared payload,
+- the stored key matches the requested key.
 
-## Opaque storage container
+Unexpected EOF while reading an existing cache entry is corruption, not a generic I/O failure, so callers can safely discard and rebuild truncated entries.
 
-`FileCache` stores opaque payload bytes. Analysis serialization remains a separate concern.
+## Analysis payload hardening
 
-Current file envelope:
+The deterministic analysis codec validates collection counts against both hard limits and the bytes actually remaining before allocating nested vectors.
 
-```text
-8 bytes   magic: R3CACHE\0
-4 bytes   cache file version (LE)
-32 bytes  expected cache key
-8 bytes   payload length (LE)
-32 bytes  BLAKE3(payload)
-N bytes   opaque payload
-```
+It rejects:
 
-Reads reject:
+- truncated payloads,
+- impossible collection counts,
+- duplicate IDs,
+- dangling block references,
+- invalid block ranges,
+- invalid enum tags,
+- malformed UTF-8,
+- oversized strings/collections,
+- trailing bytes.
 
-- bad magic
-- unsupported file version
-- key mismatch
-- payloads above the configured size limit
-- truncated files
-- trailing bytes
-- checksum mismatch
-
-The default maximum payload is 512 MiB and can be lowered by callers.
+The parser never trusts a count merely because it fits an integer type.
 
 ## Atomic writes
 
-Entries are written to a unique temporary file in the destination directory, flushed with `sync_all`, then renamed into place.
+Entries are written to unique same-directory temporary files, flushed with `sync_all`, then renamed into their content-addressed final path. Concurrent same-key writers may race safely; the losing temporary file is discarded.
 
-The content-addressed key means a concurrent writer producing the same final key may safely win the race; the loser discards its temporary file.
-
-## Directory layout
-
-```text
-<root>/
-  ab/
-    abcdef...r3c
-```
-
-The first key byte is used as a shard directory.
-
-## Required invalidation
-
-A cache miss is mandatory when any of the following changes:
-
-- binary bytes
-- loader semantics
-- decoder semantics
-- analysis schema
-- relevant analysis options
-
-## Analysis payload
-
-`AnalysisSnapshot` now has a deterministic bounded binary codec for:
-
-- functions and names
-- basic blocks and successors
-- CFG membership
-- xrefs
-- fidelity
-- extracted strings
-
-Decoding rejects duplicate IDs, invalid enum tags, dangling block references, oversized collections/strings, malformed UTF-8, invalid block ranges, and trailing bytes.
-
-The CLI command:
+## CLI
 
 ```sh
 radare3 afl-cache <file> [cache-dir]
 ```
 
-derives a key from binary contents, loader/decoder semantic versions, analysis options, and the string threshold. Invalid cache entries are discarded and rebuilt rather than treated as authoritative.
-
-Cold-vs-warm timing:
-
-```sh
-RUNS=20 ./scripts/bench-cache.sh
-```
-
-## Next step
-
-Move cached reopening into the default analysis path after baseline measurements establish the overhead/benefit, then expand the payload with normalized binary metadata and function-seed provenance.
+Invalid or incompatible entries are discarded and rebuilt. Use `scripts/bench-cache.sh` for cold-vs-warm timing.
