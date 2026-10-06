@@ -106,8 +106,8 @@ fn memory_data_target(instruction: &iced_x86::Instruction) -> Option<Address> {
         return Some(Address(instruction.ip_rel_memory_address()));
     }
 
-    let has_explicit_memory = (0..instruction.op_count())
-        .any(|operand| instruction.op_kind(operand) == OpKind::Memory);
+    let has_explicit_memory =
+        (0..instruction.op_count()).any(|operand| instruction.op_kind(operand) == OpKind::Memory);
 
     if has_explicit_memory
         && instruction.memory_base() == Register::None
