@@ -4,7 +4,7 @@ use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FlowControl, OpKind};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
-pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v1";
+pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v2-data-xrefs";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IcedX86Decoder {
@@ -44,12 +44,16 @@ impl Decoder for IcedX86Decoder {
             }
             _ => None,
         };
+        let data_target = instruction
+            .is_ip_rel_memory_operand()
+            .then(|| Address(instruction.ip_rel_memory_address()));
 
         Ok(DecodedInstruction {
             address,
             length,
             flow,
             target,
+            data_target,
         })
     }
 }
@@ -79,6 +83,7 @@ mod tests {
         assert_eq!(decoded.length, 1);
         assert_eq!(decoded.flow, FlowKind::Return);
         assert_eq!(decoded.target, None);
+        assert_eq!(decoded.data_target, None);
 
         Ok(())
     }
@@ -92,6 +97,24 @@ mod tests {
         assert_eq!(decoded.length, 5);
         assert_eq!(decoded.flow, FlowKind::Call);
         assert_eq!(decoded.target, Some(Address(0x40100a)));
+        assert_eq!(decoded.data_target, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_rip_relative_data_target() -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = IcedX86Decoder::x86_64()
+            .decode(
+                Address(0x401000),
+                &[0x48, 0x8b, 0x05, 0x34, 0x12, 0x00, 0x00],
+            )
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(decoded.length, 7);
+        assert_eq!(decoded.flow, FlowKind::Fallthrough);
+        assert_eq!(decoded.target, None);
+        assert_eq!(decoded.data_target, Some(Address(0x40223b)));
 
         Ok(())
     }
