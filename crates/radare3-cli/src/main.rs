@@ -894,7 +894,7 @@ fn hexdump(
         let ascii = chunk
             .iter()
             .map(|byte| {
-                if matches!(byte, 0x20..=0x7e) {
+                if matches!(*byte, 0x20..=0x7e) {
                     char::from(*byte)
                 } else {
                     '.'
