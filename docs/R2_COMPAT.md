@@ -32,10 +32,7 @@ These are recognized as useful r2 commands but are not yet implemented natively:
 
 ```text
 aaa
-afi
 pdf
-axt
-axf
 is
 iS
 px
@@ -85,8 +82,14 @@ Native routing currently covers:
 ```text
 afl
 aflj
+afi
+afij
 agf
 agfj
+axt
+axtj
+axf
+axfj
 izz
 izzj
 /x
@@ -95,3 +98,10 @@ ij
 ```
 
 The remaining fallback surface can be replaced one command at a time as native engines mature.
+
+
+## Native xref/query semantics
+
+The current native `axt` and `axf` query the exact address against radare3's current analysis xref set. They do not yet claim every stateful or heuristic behavior of radare2's richer xref database.
+
+`afi` resolves a discovered function by entry address (or the binary entry point by default), reports block count, incoming xrefs to the function entry, and outgoing xrefs whose source address lies inside one of the function's canonical blocks.
