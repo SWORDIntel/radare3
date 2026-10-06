@@ -495,6 +495,12 @@ fn discover_function<D: Decoder>(
                         if is_executable_file_address(image, target) {
                             callees.insert(target);
                         }
+                    } else if let Some(slot) = decoded.data_target {
+                        insert_xref(
+                            &mut xrefs,
+                            (decoded.address, slot, XrefKindKey::Call),
+                            options.max_xrefs,
+                        )?;
                     }
                     current = next;
                 }
@@ -964,6 +970,79 @@ mod tests {
                 sequential
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn indirect_rip_relative_call_preserves_call_and_data_xrefs() -> Result<(), AnalysisError> {
+        #[derive(Clone, Copy)]
+        struct IndirectCallDecoder;
+
+        impl Decoder for IndirectCallDecoder {
+            fn decode(
+                &self,
+                address: Address,
+                bytes: &[u8],
+            ) -> Result<radare3_arch::DecodedInstruction, radare3_arch::DecodeError> {
+                use radare3_arch::{DecodeError, DecodedInstruction};
+
+                match (address.0, bytes.first().copied()) {
+                    (0x3000, Some(0xff)) => Ok(DecodedInstruction {
+                        address,
+                        length: 6,
+                        flow: FlowKind::Call,
+                        target: None,
+                        data_target: Some(Address(0x4000)),
+                    }),
+                    (0x3006, Some(0xc3)) => Ok(DecodedInstruction {
+                        address,
+                        length: 1,
+                        flow: FlowKind::Return,
+                        target: None,
+                        data_target: None,
+                    }),
+                    _ => Err(DecodeError::InvalidInstruction),
+                }
+            }
+        }
+
+        let mut bytes = vec![0_u8; 7];
+        bytes[0] = 0xff;
+        bytes[6] = 0xc3;
+        let image = BinaryImage::new(
+            Arc::from(bytes),
+            BinaryFormat::Raw,
+            Architecture::X86_64,
+            Address(0x3000),
+            Some(Address(0x3000)),
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x3000),
+                file_offset: 0,
+                file_size: 7,
+                memory_size: 7,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        );
+
+        let options = AnalysisOptions::default();
+        let sequential = RecursiveAnalyzer::new(IndirectCallDecoder).analyze(&image, &options)?;
+        let parallel = ParallelAnalyzer::new(IndirectCallDecoder).analyze(&image, &options)?;
+
+        assert_eq!(sequential, parallel);
+        assert_eq!(parallel.cfg.functions.len(), 1);
+        assert_eq!(parallel.xrefs.len(), 2);
+        assert_eq!(parallel.xrefs[0].from, Address(0x3000));
+        assert_eq!(parallel.xrefs[0].to, Address(0x4000));
+        assert_eq!(parallel.xrefs[0].kind, XrefKind::Call);
+        assert_eq!(parallel.xrefs[1].from, Address(0x3000));
+        assert_eq!(parallel.xrefs[1].to, Address(0x4000));
+        assert_eq!(parallel.xrefs[1].kind, XrefKind::Data);
 
         Ok(())
     }
