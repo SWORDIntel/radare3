@@ -83,6 +83,14 @@ fn main() {
             Some(path) => afi_json(&path, args.next().as_deref()),
             None => Err("afij requires a file path".to_string()),
         },
+        Some("pdf") => match args.next() {
+            Some(path) => pdf(&path, args.next().as_deref(), false),
+            None => Err("pdf requires a file path".to_string()),
+        },
+        Some("pdfj") => match args.next() {
+            Some(path) => pdf(&path, args.next().as_deref(), true),
+            None => Err("pdfj requires a file path".to_string()),
+        },
         Some("afl-seq" | "analyze-seq") => match args.next() {
             Some(path) => afl(&path, true),
             None => Err("afl-seq requires a file path".to_string()),
@@ -161,7 +169,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -497,6 +505,117 @@ fn afi_json(path: &str, requested: Option<&str>) -> Result<(), String> {
             "xrefs_out": outgoing,
         }
     }))
+}
+
+fn pdf(path: &str, requested: Option<&str>, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+    let function = resolve_function(&image, &result, requested)?;
+    let decoder = IcedX86Decoder::x86_64();
+
+    if json {
+        let mut instructions = Vec::new();
+
+        for block_id in &function.blocks {
+            let block = result
+                .cfg
+                .blocks
+                .get(block_id)
+                .ok_or_else(|| "CFG contains a missing block reference".to_string())?;
+            let length = block
+                .end
+                .0
+                .checked_sub(block.start.0)
+                .ok_or_else(|| "CFG block has an invalid address range".to_string())?;
+            let length = usize::try_from(length)
+                .map_err(|_| "CFG block is too large to disassemble".to_string())?;
+            let bytes = image
+                .bytes_at(block.start, length)
+                .ok_or_else(|| format!("block {} is not fully file-backed", block.start))?;
+
+            for instruction in decoder
+                .disassemble(block.start, bytes)
+                .map_err(|error| format!("disassembly failed at {}: {error:?}", block.start))?
+            {
+                let raw = image
+                    .bytes_at(instruction.address, usize::from(instruction.length))
+                    .ok_or_else(|| {
+                        format!(
+                            "instruction {} is not fully file-backed",
+                            instruction.address
+                        )
+                    })?;
+                instructions.push(serde_json::json!({
+                    "block_id": block.id.0,
+                    "address": instruction.address.0,
+                    "length": instruction.length,
+                    "bytes_hex": hex_bytes(raw),
+                    "text": instruction.text,
+                }));
+            }
+        }
+
+        return print_json(serde_json::json!({
+            "schema": "radare3.pdf.v1",
+            "function": {
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "block_count": function.blocks.len(),
+            },
+            "instructions": instructions,
+        }));
+    }
+
+    println!(
+        "{} {} blocks={}",
+        function.entry,
+        function.name.as_deref().unwrap_or("unnamed"),
+        function.blocks.len()
+    );
+
+    for block_id in &function.blocks {
+        let block = result
+            .cfg
+            .blocks
+            .get(block_id)
+            .ok_or_else(|| "CFG contains a missing block reference".to_string())?;
+        let length = block
+            .end
+            .0
+            .checked_sub(block.start.0)
+            .ok_or_else(|| "CFG block has an invalid address range".to_string())?;
+        let length = usize::try_from(length)
+            .map_err(|_| "CFG block is too large to disassemble".to_string())?;
+        let bytes = image
+            .bytes_at(block.start, length)
+            .ok_or_else(|| format!("block {} is not fully file-backed", block.start))?;
+
+        println!("block {}..{}", block.start, block.end);
+
+        for instruction in decoder
+            .disassemble(block.start, bytes)
+            .map_err(|error| format!("disassembly failed at {}: {error:?}", block.start))?
+        {
+            let raw = image
+                .bytes_at(instruction.address, usize::from(instruction.length))
+                .ok_or_else(|| {
+                    format!(
+                        "instruction {} is not fully file-backed",
+                        instruction.address
+                    )
+                })?;
+            println!(
+                "  {} {:<30} {}",
+                instruction.address,
+                hex_bytes(raw),
+                instruction.text
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn afl_cached(path: &str, cache_dir: Option<&str>) -> Result<(), String> {
@@ -1053,6 +1172,8 @@ fn route_native(path: &str, command: &str) -> Result<(), String> {
         "aflj" => require_no_extra(parts, "aflj").and_then(|()| afl_json(path)),
         "afi" => route_optional_function_info(path, parts, false),
         "afij" => route_optional_function_info(path, parts, true),
+        "pdf" => route_optional_pdf(path, parts, false),
+        "pdfj" => route_optional_pdf(path, parts, true),
         "agf" => route_optional_address(path, parts, false),
         "agfj" => route_optional_address(path, parts, true),
         "axt" => route_required_xref_address(path, parts, true, false),
@@ -1125,6 +1246,19 @@ fn require_no_extra<'a>(
         return Err(format!("{command} does not accept routed arguments"));
     }
     Ok(())
+}
+
+fn route_optional_pdf<'a>(
+    path: &str,
+    mut parts: impl Iterator<Item = &'a str>,
+    json: bool,
+) -> Result<(), String> {
+    let address = parts.next();
+    if parts.next().is_some() {
+        return Err("pdf/pdfj accept at most one function address".to_string());
+    }
+
+    pdf(path, address, json)
 }
 
 fn route_optional_function_info<'a>(

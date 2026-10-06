@@ -10,6 +10,7 @@ iij
 pxj
 aflj
 afij
+pdfj
 agfj
 axtj
 axfj
@@ -29,6 +30,7 @@ radare3.imports.v1
 radare3.px.v1
 radare3.afl.v1
 radare3.afi.v1
+radare3.pdf.v1
 radare3.agf.v1
 radare3.axt.v1
 radare3.axf.v1

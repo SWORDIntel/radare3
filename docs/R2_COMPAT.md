@@ -32,7 +32,6 @@ These are recognized as useful r2 commands but are not yet implemented natively:
 
 ```text
 aaa
-pdf
 px
 pxj
 s
@@ -89,6 +88,8 @@ axt
 axtj
 axf
 axfj
+pdf
+pdfj
 izz
 izzj
 /x
@@ -138,3 +139,10 @@ Undefined/import symbols are intentionally not reported as local symbols; import
 PE imports include the loader-patched IAT slot virtual address when it can be represented safely, plus DLL/name and ordinal for ordinal-only imports.
 
 ELF imports are undefined named entries from `.dynsym`. They are deliberately emitted without a fabricated slot or provider library because resolving those requires relocation/version/dependency information beyond the symbol table itself.
+
+
+## Function disassembly
+
+`pdf` and `pdfj` are native.
+
+They first run radare3 analysis, resolve a discovered function by entry address (or use the binary entry point), then format the canonical basic-block ranges belonging to that function. This deliberately avoids treating an arbitrary contiguous byte range as equivalent to a recovered function.

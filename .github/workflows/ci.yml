@@ -51,6 +51,7 @@ jobs:
           "$r3" isj "$target" > /tmp/r3-isj.json
           "$r3" iij "$target" > /tmp/r3-iij.json
           "$r3" aflj "$target" > /tmp/r3-aflj.json
+          "$r3" pdfj "$target" > /tmp/r3-pdfj.json
           "$r3" agfj "$target" > /tmp/r3-agfj.json
           "$r3" izzj "$target" > /tmp/r3-izzj.json
           "$r3" /xj "$target" 524144415245335f5345415243485f4d41524b4552 > /tmp/r3-xj.json
@@ -63,6 +64,7 @@ jobs:
               "/tmp/r3-isj.json": "radare3.symbols.v1",
               "/tmp/r3-iij.json": "radare3.imports.v1",
               "/tmp/r3-aflj.json": "radare3.afl.v1",
+              "/tmp/r3-pdfj.json": "radare3.pdf.v1",
               "/tmp/r3-agfj.json": "radare3.agf.v1",
               "/tmp/r3-izzj.json": "radare3.izz.v1",
               "/tmp/r3-xj.json": "radare3.search.v1",
@@ -78,6 +80,9 @@ jobs:
 
           with open("/tmp/r3-aflj.json", encoding="utf-8") as handle:
               assert json.load(handle)["functions"]
+
+          with open("/tmp/r3-pdfj.json", encoding="utf-8") as handle:
+              assert json.load(handle)["instructions"]
 
           with open("/tmp/r3-xj.json", encoding="utf-8") as handle:
               assert len(json.load(handle)["hits"]) >= 2
