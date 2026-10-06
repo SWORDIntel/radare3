@@ -42,17 +42,30 @@ izzj
 ij
 ```
 
-The current router only classifies. It does not yet spawn radare2.
+## Fallback executor
+
+`R2FallbackExecutor` now executes only commands classified as `Fallback`.
+
+It invokes radare2 directly with explicit argv:
+
+```text
+r2 -2 -q -c <command> <binary>
+```
+
+There is no shell interpolation.
+
+The executor:
+
+- uses a configurable executable path,
+- has a configurable timeout,
+- drains stdout/stderr concurrently to avoid pipe deadlock,
+- kills and reaps radare2 on timeout,
+- returns stdout, stderr, exit code, and an explicit `timed_out` bit,
+- refuses native and unsupported commands before spawning anything,
+- reports spawn/I/O/thread failures separately.
+
+The executor exists at the compatibility-library layer. The CLI does not automatically fall back yet; that remains an explicit integration decision so fallback is never invisible.
 
 ## Next step
 
-Add an explicit fallback executor that:
-
-1. receives a command classified as `Fallback`,
-2. invokes a configured radare2 executable,
-3. forwards the current binary,
-4. captures exit status/stdout/stderr,
-5. makes fallback observable to the caller,
-6. never silently turns execution failure into native success.
-
-Native JSON variants should replace fallback one command at a time.
+Expose explicit CLI fallback/routing mode, then replace fallback JSON commands with native radare3 renderers one at a time.
