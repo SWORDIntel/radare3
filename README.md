@@ -75,6 +75,10 @@ python3 scripts/check-benchmark-regression.py \
   --threshold 5
 ```
 
+## Roadmap
+
+See [docs/MASTER_ROADMAP.md](docs/MASTER_ROADMAP.md) for the full engineering plan and [docs/ROADMAP.md](docs/ROADMAP.md) for the compact status checklist.
+
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

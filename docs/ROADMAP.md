@@ -1,5 +1,7 @@
 # Roadmap
 
+This is the compact implementation-status view. The full engineering plan, release milestones, gates, and non-goals live in [MASTER_ROADMAP.md](MASTER_ROADMAP.md).
+
 ## Phase 0 — Scaffold
 
 - [x] workspace boundaries
