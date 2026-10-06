@@ -331,7 +331,9 @@ mod tests {
         }]);
 
         assert_eq!(
-            image.import_at_slot(Address(0x2000)).map(|import| import.name.as_str()),
+            image
+                .import_at_slot(Address(0x2000))
+                .map(|import| import.name.as_str()),
             Some("puts")
         );
         assert_eq!(image.import_at_slot(Address(0x2008)), None);
