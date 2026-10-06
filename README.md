@@ -10,83 +10,56 @@ radare3 is an experimental high-performance binary-analysis engine focused on th
 
 The current static-analysis slice includes:
 
-- ELF64 normalization
-- PE32+ normalization
+- ELF64 and PE32+ normalization
 - x86/x86-64 decoding through an isolated iced-x86 backend
 - read-only mmap-backed input
-- virtual-address / file-offset mapping
-- typed function seeds:
-  - image entry point
-  - ELF function symbols
-  - PE exports
-  - PE x64 exception table (`.pdata`)
-- deterministic recursive-descent function discovery
-- function-level parallel discovery using Rayon work stealing
-- reusable dense worker-local visited maps with a sparse fallback for large images
-- deterministic canonical CFG merge after parallel discovery
-- exact sequential/parallel differential fixtures
-- basic-block and CFG recovery
-- call-derived function seeds
+- ELF symbol, PE export, PE `.pdata`, entrypoint, and call-derived function seeds
+- deterministic recursive-descent and function-level parallel analysis
+- dense worker-local visited maps with sparse fallback
+- deterministic canonical CFG merge
+- exact sequential/parallel differential verification
 - call/code xrefs
-- ASCII and UTF-16LE string extraction
-- `afl`, `afl-seq`, `agf`, and `izz`-style CLI paths
-- radare3-vs-radare2 benchmark harness
+- ASCII and UTF-16LE string extraction across segments in parallel
+- SIMD-dispatched single-byte and substring search through `memchr`
+- `afl`, `afl-seq`, `agf`, `izz`, and `/x`-style CLI paths
+- source-built benchmark corpus
+- stored hyperfine JSON + machine metadata
+- median regression gate
 
-Still intentionally missing: persistent caching, SIMD search, broad r2 command fallback, and ARM64 analysis.
+Still intentionally missing: persistent caching, broad radare2 command fallback, ARM64 analysis, and a committed hardware-specific performance baseline.
 
 ## Quick start
 
 ```sh
 cargo build --workspace
 cargo run -p radare3-cli -- info /bin/ls
-cargo run -p radare3-cli -- decode /bin/ls 0xADDRESS
 cargo run -p radare3-cli -- afl /bin/ls
 cargo run -p radare3-cli -- afl-seq /bin/ls
 cargo run -p radare3-cli -- agf /bin/ls
 cargo run -p radare3-cli -- izz /bin/ls
+cargo run -p radare3-cli -- search /bin/ls 7f454c46
+cargo run -p radare3-cli -- /x /bin/ls 7f454c46
+cargo run -p radare3-cli -- verify /bin/ls
 ```
 
-`afl` uses the parallel analyzer. `afl-seq` keeps the deterministic single-threaded analyzer available as a truth/performance oracle. Set `RAYON_NUM_THREADS` to pin the parallel worker count.
-
-Analysis currently accepts x86-64 images only. String extraction is architecture-independent.
-
-## Analysis model
-
-The fast path is parallel without making output order depend on scheduling:
-
-1. collect trusted loader seeds,
-2. process function seeds in deterministic waves,
-3. let worker tasks recursively discover local blocks, callees, and xrefs,
-4. merge worker discoveries only after the wave completes,
-5. canonicalize overlapping provisional blocks using the global block-start set,
-6. rebuild per-function block membership from canonical CFG reachability,
-7. assign function, block, and xref IDs from sorted addresses.
-
-The sequential analyzer uses the same discovery/canonicalization logic and is tested for exact equality with the parallel result.
-
-The mmap call is the only intentionally unsafe operation in this path and lives in the narrow `radare3-mmap` boundary crate. Core crates continue to forbid unsafe Rust.
+`afl` uses the parallel analyzer. `afl-seq` is the truth/performance oracle. `search` and `/x` are aliases and accept even-length hexadecimal patterns.
 
 ## Benchmarking
 
-With radare2 installed:
+Build the reproducible local corpus:
 
 ```sh
-./scripts/bench-analysis.sh /bin/ls /bin/bash
+./scripts/build-benchmark-corpus.sh
 ```
 
-The harness checks radare3 parallel/sequential function counts before timing. With `hyperfine`, it benchmarks:
-
-- radare3 parallel
-- radare3 sequential
-- radare2 `aaa;afl`
-
-For a fixed worker count:
+Then benchmark analysis or literal search:
 
 ```sh
-RAYON_NUM_THREADS=8 RUNS=20 ./scripts/bench-analysis.sh /bin/ls /bin/bash
+RUNS=20 RAYON_NUM_THREADS=8 ./scripts/bench-analysis.sh
+RUNS=20 ./scripts/bench-search.sh
 ```
 
-radare2 output coverage is still a correctness signal rather than a parity claim. No headline speedup should be published until the compared workloads are materially equivalent.
+Results land under `.radare3/bench/` as hyperfine JSON plus metadata. No speedup claim is valid until the compared outputs pass their correctness gate.
 
 See [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 
@@ -96,6 +69,10 @@ See [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+python3 scripts/check-benchmark-regression.py \
+  benchmarks/testdata/baseline.json \
+  benchmarks/testdata/current-ok.json \
+  --threshold 5
 ```
 
 ## Architecture

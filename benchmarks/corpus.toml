@@ -1,0 +1,15 @@
+schema = 1
+
+[defaults]
+output_dir = ".radare3/corpus"
+search_hex = "524144415245335f5345415243485f4d41524b4552"
+
+[[target]]
+name = "r3bench-o0"
+source = "benchmarks/fixtures/r3bench.c"
+recipe = "cc -std=c11 -O0 -g0 -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o .radare3/corpus/r3bench-o0"
+
+[[target]]
+name = "r3bench-o2"
+source = "benchmarks/fixtures/r3bench.c"
+recipe = "cc -std=c11 -O2 -g0 -s -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o .radare3/corpus/r3bench-o2"

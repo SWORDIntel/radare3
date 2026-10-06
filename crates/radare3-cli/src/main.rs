@@ -4,7 +4,7 @@ use radare3::analysis::{AnalysisOptions, Analyzer, ParallelAnalyzer, RecursiveAn
 use radare3::arch::Decoder;
 use radare3::arch_x86::IcedX86Decoder;
 use radare3::loader::{GoblinLoader, Loader};
-use radare3::search::{StringEncoding, extract_strings};
+use radare3::search::{StringEncoding, extract_strings, find_bytes};
 use radare3::types::{Address, Architecture};
 
 fn main() {
@@ -48,6 +48,10 @@ fn main() {
             Some(path) => verify(&path),
             None => Err("verify requires a file path".to_string()),
         },
+        Some("search" | "/x") => match (args.next(), args.next()) {
+            (Some(path), Some(pattern)) => search_bytes(&path, &pattern),
+            _ => Err("search requires a file path and hexadecimal pattern".to_string()),
+        },
         Some(other) => Err(format!("unsupported command: {other}")),
     };
 
@@ -59,7 +63,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 afl-seq <file>\n  radare3 agf <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -272,6 +276,52 @@ fn izz(path: &str, minimum: Option<&str>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn search_bytes(path: &str, pattern: &str) -> Result<(), String> {
+    let image = load(path)?;
+    let needle = parse_hex(pattern)?;
+
+    if needle.is_empty() {
+        return Err("hex pattern must not be empty".to_string());
+    }
+
+    let hits = find_bytes(&image, &needle);
+    for hit in &hits {
+        println!("{} len={}", hit.address, hit.length);
+    }
+    eprintln!("hits={}", hits.len());
+
+    Ok(())
+}
+
+fn parse_hex(value: &str) -> Result<Vec<u8>, String> {
+    let compact: String = value
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace() && *character != '_')
+        .collect();
+    let compact = compact
+        .strip_prefix("0x")
+        .or_else(|| compact.strip_prefix("0X"))
+        .unwrap_or(&compact);
+
+    if compact.is_empty() {
+        return Ok(Vec::new());
+    }
+    if compact.len() % 2 != 0 {
+        return Err("hex pattern must contain an even number of digits".to_string());
+    }
+
+    compact
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair)
+                .map_err(|error| format!("invalid hex pattern: {error}"))?;
+            u8::from_str_radix(text, 16)
+                .map_err(|error| format!("invalid hex byte {text}: {error}"))
+        })
+        .collect()
 }
 
 fn ensure_x86_64(image: &radare3::image::BinaryImage) -> Result<(), String> {
