@@ -79,4 +79,20 @@ jobs:
         run: |
           bash -n scripts/run-benchmark-campaign.sh
           bash -n scripts/profile-analysis.sh
-          python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py
+          python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py scripts/summarize-benchmark-campaign.py
+      - name: Benchmark scaling summary self-test
+        run: |
+          python3 scripts/summarize-benchmark-campaign.py benchmarks/testdata/campaign             --output /tmp/r3-campaign-summary.json             --tsv /tmp/r3-campaign-summary.tsv
+          python3 - <<'PY'
+          import json
+
+          with open("/tmp/r3-campaign-summary.json", encoding="utf-8") as handle:
+              rows = json.load(handle)["rows"]
+
+          assert [row["threads"] for row in rows] == [1, 2, 4]
+          assert abs(rows[0]["speedup"] - 1.0) < 1e-9
+          assert abs(rows[1]["speedup"] - (1.0 / 0.55)) < 1e-9
+          assert abs(rows[1]["efficiency"] - ((1.0 / 0.55) / 2.0)) < 1e-9
+          assert abs(rows[2]["speedup"] - (1.0 / 0.30)) < 1e-9
+          assert abs(rows[2]["efficiency"] - ((1.0 / 0.30) / 4.0)) < 1e-9
+          PY

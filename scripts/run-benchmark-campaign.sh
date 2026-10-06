@@ -49,4 +49,8 @@ echo "== literal search =="
 RUNS="$runs" RESULT_DIR="$search_out" ./scripts/bench-search.sh "${targets[@]}"
 
 echo
+echo "== scaling summary =="
+python3 scripts/summarize-benchmark-campaign.py "$base_dir"
+
+echo
 echo "campaign complete: $base_dir"

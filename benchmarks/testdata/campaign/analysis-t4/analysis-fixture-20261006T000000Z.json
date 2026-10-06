@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "command": "radare3 parallel",
+      "median": 0.3,
+      "times": [
+        0.3,
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "command": "radare3 sequential",
+      "median": 2,
+      "times": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "command": "radare2 aaa+afl",
+      "median": 1.5,
+      "times": [
+        1.5,
+        1.5,
+        1.5
+      ]
+    }
+  ]
+}
