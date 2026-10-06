@@ -583,7 +583,10 @@ impl<'a> SliceReader<'a> {
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], CacheError> {
         let end = self.offset.checked_add(len).ok_or(CacheError::Corrupt)?;
-        let value = self.bytes.get(self.offset..end).ok_or(CacheError::Corrupt)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(CacheError::Corrupt)?;
         self.offset = end;
         Ok(value)
     }
@@ -593,18 +596,12 @@ impl<'a> SliceReader<'a> {
     }
 
     fn read_u32(&mut self) -> Result<u32, CacheError> {
-        let bytes: [u8; 4] = self
-            .take(4)?
-            .try_into()
-            .map_err(|_| CacheError::Corrupt)?;
+        let bytes: [u8; 4] = self.take(4)?.try_into().map_err(|_| CacheError::Corrupt)?;
         Ok(u32::from_le_bytes(bytes))
     }
 
     fn read_u64(&mut self) -> Result<u64, CacheError> {
-        let bytes: [u8; 8] = self
-            .take(8)?
-            .try_into()
-            .map_err(|_| CacheError::Corrupt)?;
+        let bytes: [u8; 8] = self.take(8)?.try_into().map_err(|_| CacheError::Corrupt)?;
         Ok(u64::from_le_bytes(bytes))
     }
 
