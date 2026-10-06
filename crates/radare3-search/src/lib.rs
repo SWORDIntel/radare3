@@ -27,10 +27,7 @@ impl SearchEngine for FastSearchEngine {
         if needle.len() == 1 {
             return memchr_iter(needle[0], haystack)
                 .filter_map(|offset| {
-                    add_offset(base, offset).map(|address| SearchHit {
-                        address,
-                        length: 1,
-                    })
+                    add_offset(base, offset).map(|address| SearchHit { address, length: 1 })
                 })
                 .collect();
         }
@@ -265,9 +262,11 @@ mod tests {
 
     #[test]
     fn empty_pattern_has_no_hits() {
-        assert!(FastSearchEngine
-            .find_all(Address(0), b"anything", b"")
-            .is_empty());
+        assert!(
+            FastSearchEngine
+                .find_all(Address(0), b"anything", b"")
+                .is_empty()
+        );
     }
 
     #[test]
