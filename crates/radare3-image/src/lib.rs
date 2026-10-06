@@ -120,7 +120,8 @@ impl ImportIndex {
     }
 
     pub fn import<'a>(&self, imports: &'a [Import], slot: Address) -> Option<&'a Import> {
-        self.position(slot).and_then(|position| imports.get(position))
+        self.position(slot)
+            .and_then(|position| imports.get(position))
     }
 
     pub fn len(&self) -> usize {
