@@ -6,6 +6,7 @@ radare3 now has native JSON renderers for the first high-value command surface:
 ij
 iSj
 isj
+iij
 pxj
 aflj
 afij
@@ -24,6 +25,7 @@ Every top-level payload carries a schema identifier:
 radare3.info.v1
 radare3.sections.v1
 radare3.symbols.v1
+radare3.imports.v1
 radare3.px.v1
 radare3.afl.v1
 radare3.afi.v1

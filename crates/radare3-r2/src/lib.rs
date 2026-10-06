@@ -28,9 +28,8 @@ impl R2Compatibility for DefaultR2Compatibility {
 
         match head {
             "afl" | "afi" | "afij" | "agf" | "izz" | "/x" | "/xj" | "aflj" | "agfj" | "izzj"
-            | "ij" | "iS" | "iSj" | "is" | "isj" | "axt" | "axtj" | "axf" | "axfj" => {
-                CommandDisposition::Native
-            }
+            | "ij" | "iS" | "iSj" | "is" | "isj" | "ii" | "iij" | "axt" | "axtj" | "axf"
+            | "axfj" => CommandDisposition::Native,
             "aaa" | "pdf" | "px" | "pxj" | "s" => CommandDisposition::Fallback,
             _ => CommandDisposition::Unsupported,
         }
@@ -176,6 +175,8 @@ mod tests {
             "iSj",
             "is",
             "isj",
+            "ii",
+            "iij",
             "axt",
             "axtj",
             "axf",

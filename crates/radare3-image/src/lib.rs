@@ -80,6 +80,22 @@ pub struct Symbol {
     pub name: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ImportKind {
+    Function,
+    Object,
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Import {
+    pub slot: Option<Address>,
+    pub library: Option<String>,
+    pub name: String,
+    pub ordinal: Option<u16>,
+    pub kind: ImportKind,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Permissions {
     pub read: bool,
@@ -123,6 +139,7 @@ pub struct BinaryImage {
     pub segments: Vec<Segment>,
     pub function_seeds: Vec<FunctionSeed>,
     pub symbols: Vec<Symbol>,
+    pub imports: Vec<Import>,
 }
 
 impl BinaryImage {
@@ -171,6 +188,7 @@ impl BinaryImage {
             segments,
             function_seeds,
             symbols: Vec::new(),
+            imports: Vec::new(),
         }
     }
 
@@ -185,6 +203,13 @@ impl BinaryImage {
         self.symbols.append(&mut symbols);
         self.symbols.sort();
         self.symbols.dedup();
+        self
+    }
+
+    pub fn with_imports(mut self, mut imports: Vec<Import>) -> Self {
+        self.imports.append(&mut imports);
+        self.imports.sort();
+        self.imports.dedup();
         self
     }
 
@@ -279,6 +304,37 @@ mod tests {
             Some(2)
         );
         assert!(!image.is_mapped());
+    }
+
+    #[test]
+    fn canonicalizes_imports() {
+        let image = BinaryImage::new(
+            Arc::from([0xc3_u8]),
+            BinaryFormat::Raw,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![],
+        )
+        .with_imports(vec![
+            Import {
+                slot: Some(Address(0x2000)),
+                library: Some("libc.so.6".to_string()),
+                name: "puts".to_string(),
+                ordinal: None,
+                kind: ImportKind::Function,
+            },
+            Import {
+                slot: Some(Address(0x2000)),
+                library: Some("libc.so.6".to_string()),
+                name: "puts".to_string(),
+                ordinal: None,
+                kind: ImportKind::Function,
+            },
+        ]);
+
+        assert_eq!(image.imports.len(), 1);
+        assert_eq!(image.imports[0].name, "puts");
     }
 
     #[test]
