@@ -1259,7 +1259,10 @@ impl SessionState {
 
     fn ensure_function_index(&mut self) -> Result<(), String> {
         self.ensure_analysis()?;
+        self.ensure_function_index_ready()
+    }
 
+    fn ensure_function_index_ready(&mut self) -> Result<(), String> {
         if self.function_index.is_some() {
             eprintln!("session-function-index=hit");
             return Ok(());
@@ -1279,7 +1282,10 @@ impl SessionState {
 
     fn ensure_xref_index(&mut self) -> Result<(), String> {
         self.ensure_analysis()?;
+        self.ensure_xref_index_ready()
+    }
 
+    fn ensure_xref_index_ready(&mut self) -> Result<(), String> {
         if self.xref_index.is_some() {
             eprintln!("session-xref-index=hit");
             return Ok(());
@@ -1289,6 +1295,12 @@ impl SessionState {
         self.xref_index = Some(index);
         eprintln!("session-xref-index=miss");
         Ok(())
+    }
+
+    fn ensure_function_xref_indexes(&mut self) -> Result<(), String> {
+        self.ensure_analysis()?;
+        self.ensure_function_index_ready()?;
+        self.ensure_xref_index_ready()
     }
 
     fn xref_index(&self) -> Result<&radare3::xref::XrefIndex, String> {
@@ -1372,8 +1384,7 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
         "afi" | "afij" => {
             let requested = parts.next().map(str::to_owned);
             require_session_end(parts, head)?;
-            state.ensure_function_index()?;
-            state.ensure_xref_index()?;
+            state.ensure_function_xref_indexes()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
             render_session_afi(
                 state.analysis()?,
