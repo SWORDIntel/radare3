@@ -132,3 +132,23 @@ python3 scripts/summarize-benchmark-campaign.py .radare3/campaign/<machine>
 ```
 
 The JSON retains the parallel, sequential, and radare2 medians for each target/thread point so scaling can be inspected without losing the comparison context.
+
+
+## Session reuse
+
+Measure repeated analysis work as two equivalent user workflows:
+
+```sh
+RUNS=20 ./scripts/bench-session.sh
+```
+
+The benchmark compares:
+
+```text
+one-shot: radare3 afl <file> ; radare3 pdf <file>
+session:  printf 'afl\npdf\nq\n' | radare3 session <file>
+```
+
+The one-shot path maps and analyzes the binary independently for each command. The session path maps once and reuses one in-memory analysis result.
+
+This benchmark measures the end-to-end workflow benefit of reuse. It is not a substitute for the analysis benchmark, and no speedup claim should be made until the same stable-machine requirements are met.
