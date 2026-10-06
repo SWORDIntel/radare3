@@ -45,3 +45,16 @@ ELF imports now consult dynamic relocations. Slot selection is deterministic:
 The first relocation for a dynamic-symbol index wins. The relocation's `r_offset` becomes the normalized import slot address.
 
 This makes typical x86-64 PLT/GOT imports directly addressable by `ii/iij` and allows data xrefs landing on a GOT slot to be annotated with the import name.
+
+
+## Derived slot index
+
+`ImportIndex` is a deterministic secondary index:
+
+```text
+import slot address -> position in BinaryImage.imports
+```
+
+It stores only positions into the canonical import vector and is not persisted.
+
+If multiple canonical import records share a slot, the first record in canonical import order wins. This matches the existing `BinaryImage::import_at_slot` behavior while avoiding repeated full-vector scans in interactive workloads.
