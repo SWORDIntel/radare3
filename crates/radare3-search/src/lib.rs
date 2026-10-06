@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+use memchr::{memchr_iter, memmem};
 use radare3_image::BinaryImage;
 use radare3_types::Address;
+use rayon::prelude::*;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SearchHit {
     pub address: Address,
     pub length: usize,
@@ -11,6 +13,56 @@ pub struct SearchHit {
 
 pub trait SearchEngine: Send + Sync {
     fn find_all(&self, base: Address, haystack: &[u8], needle: &[u8]) -> Vec<SearchHit>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FastSearchEngine;
+
+impl SearchEngine for FastSearchEngine {
+    fn find_all(&self, base: Address, haystack: &[u8], needle: &[u8]) -> Vec<SearchHit> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+
+        if needle.len() == 1 {
+            return memchr_iter(needle[0], haystack)
+                .filter_map(|offset| {
+                    add_offset(base, offset).map(|address| SearchHit {
+                        address,
+                        length: 1,
+                    })
+                })
+                .collect();
+        }
+
+        memmem::find_iter(haystack, needle)
+            .filter_map(|offset| {
+                add_offset(base, offset).map(|address| SearchHit {
+                    address,
+                    length: needle.len(),
+                })
+            })
+            .collect()
+    }
+}
+
+pub fn find_bytes(image: &BinaryImage, needle: &[u8]) -> Vec<SearchHit> {
+    let engine = FastSearchEngine;
+    let mut hits: Vec<SearchHit> = image
+        .segments
+        .par_iter()
+        .map(|segment| {
+            let Some(bytes) = segment_bytes(image, segment.file_offset, segment.file_size) else {
+                return Vec::new();
+            };
+            engine.find_all(segment.address, bytes, needle)
+        })
+        .flatten()
+        .collect();
+
+    hits.sort();
+    hits.dedup();
+    hits
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -31,29 +83,32 @@ pub fn extract_strings(image: &BinaryImage, min_chars: usize) -> Vec<ExtractedSt
         return Vec::new();
     }
 
-    let mut strings = Vec::new();
+    let mut strings: Vec<ExtractedString> = image
+        .segments
+        .par_iter()
+        .map(|segment| {
+            let Some(bytes) = segment_bytes(image, segment.file_offset, segment.file_size) else {
+                return Vec::new();
+            };
 
-    for segment in &image.segments {
-        let Ok(start) = usize::try_from(segment.file_offset) else {
-            continue;
-        };
-        let Ok(size) = usize::try_from(segment.file_size) else {
-            continue;
-        };
-        let Some(end) = start.checked_add(size) else {
-            continue;
-        };
-        let Some(bytes) = image.bytes().get(start..end) else {
-            continue;
-        };
-
-        extract_ascii(segment.address, bytes, min_chars, &mut strings);
-        extract_utf16le(segment.address, bytes, min_chars, &mut strings);
-    }
+            let mut local = Vec::new();
+            extract_ascii(segment.address, bytes, min_chars, &mut local);
+            extract_utf16le(segment.address, bytes, min_chars, &mut local);
+            local
+        })
+        .flatten()
+        .collect();
 
     strings.sort();
     strings.dedup();
     strings
+}
+
+fn segment_bytes(image: &BinaryImage, file_offset: u64, file_size: u64) -> Option<&[u8]> {
+    let start = usize::try_from(file_offset).ok()?;
+    let size = usize::try_from(file_size).ok()?;
+    let end = start.checked_add(size)?;
+    image.bytes().get(start..end)
 }
 
 fn extract_ascii(
@@ -114,7 +169,7 @@ fn extract_utf16le(
             index += 2;
         }
 
-        if value.chars().count() < min_chars {
+        if value.len() < min_chars {
             index = start + 1;
             continue;
         }
@@ -170,6 +225,73 @@ mod tests {
                 },
             }],
         )
+    }
+
+    #[test]
+    fn finds_single_and_multi_byte_patterns() {
+        let engine = FastSearchEngine;
+        let haystack = b"ABABA";
+
+        assert_eq!(
+            engine.find_all(Address(0x1000), haystack, b"A"),
+            vec![
+                SearchHit {
+                    address: Address(0x1000),
+                    length: 1
+                },
+                SearchHit {
+                    address: Address(0x1002),
+                    length: 1
+                },
+                SearchHit {
+                    address: Address(0x1004),
+                    length: 1
+                }
+            ]
+        );
+
+        assert_eq!(
+            engine.find_all(Address(0x1000), haystack, b"ABA"),
+            vec![
+                SearchHit {
+                    address: Address(0x1000),
+                    length: 3
+                },
+                SearchHit {
+                    address: Address(0x1002),
+                    length: 3
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_pattern_has_no_hits() {
+        assert!(FastSearchEngine
+            .find_all(Address(0), b"anything", b"")
+            .is_empty());
+    }
+
+    #[test]
+    fn image_search_is_sorted_and_deterministic() {
+        let image = image(b"XXMARKXXMARK".to_vec());
+        let first = find_bytes(&image, b"MARK");
+        let second = find_bytes(&image, b"MARK");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            vec![
+                SearchHit {
+                    address: Address(0x4002),
+                    length: 4
+                },
+                SearchHit {
+                    address: Address(0x4008),
+                    length: 4
+                }
+            ]
+        );
     }
 
     #[test]

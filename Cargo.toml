@@ -27,6 +27,7 @@ rust-version = "1.85"
 goblin = "0.10.7"
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"] }
 memmap2 = "0.9"
+memchr = "2.8.3"
 rayon = "1.12.0"
 
 radare3 = { path = "crates/radare3" }

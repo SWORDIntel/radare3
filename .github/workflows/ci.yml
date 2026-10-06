@@ -21,3 +21,5 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Benchmark regression checker self-test
+        run: python3 scripts/check-benchmark-regression.py benchmarks/testdata/baseline.json benchmarks/testdata/current-ok.json --threshold 5
