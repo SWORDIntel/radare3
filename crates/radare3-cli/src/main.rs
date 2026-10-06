@@ -51,6 +51,14 @@ fn main() {
             Some(path) => afl_json(&path),
             None => Err("aflj requires a file path".to_string()),
         },
+        Some("afi") => match args.next() {
+            Some(path) => afi(&path, args.next().as_deref()),
+            None => Err("afi requires a file path".to_string()),
+        },
+        Some("afij") => match args.next() {
+            Some(path) => afi_json(&path, args.next().as_deref()),
+            None => Err("afij requires a file path".to_string()),
+        },
         Some("afl-seq" | "analyze-seq") => match args.next() {
             Some(path) => afl(&path, true),
             None => Err("afl-seq requires a file path".to_string()),
@@ -66,6 +74,22 @@ fn main() {
         Some("agfj") => match args.next() {
             Some(path) => agf_json(&path, args.next().as_deref()),
             None => Err("agfj requires a file path".to_string()),
+        },
+        Some("axt") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => xrefs_to(&path, &address, false),
+            _ => Err("axt requires a file path and address".to_string()),
+        },
+        Some("axtj") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => xrefs_to(&path, &address, true),
+            _ => Err("axtj requires a file path and address".to_string()),
+        },
+        Some("axf") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => xrefs_from(&path, &address, false),
+            _ => Err("axf requires a file path and address".to_string()),
+        },
+        Some("axfj") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => xrefs_from(&path, &address, true),
+            _ => Err("axfj requires a file path and address".to_string()),
         },
         Some("izz") => match args.next() {
             Some(path) => izz(&path, args.next().as_deref()),
@@ -105,7 +129,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -265,6 +289,46 @@ fn afl_json(path: &str) -> Result<(), String> {
         "schema": "radare3.afl.v1",
         "fidelity": fidelity_name(result.fidelity),
         "functions": functions,
+    }))
+}
+
+fn afi(path: &str, requested: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+    let function = resolve_function(&image, &result, requested)?;
+    let (incoming, outgoing) = function_xref_counts(&result, function);
+
+    println!(
+        "{} {} blocks={} xrefs_in={} xrefs_out={}",
+        function.entry,
+        function.name.as_deref().unwrap_or("unnamed"),
+        function.blocks.len(),
+        incoming,
+        outgoing
+    );
+
+    Ok(())
+}
+
+fn afi_json(path: &str, requested: Option<&str>) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+    let function = resolve_function(&image, &result, requested)?;
+    let (incoming, outgoing) = function_xref_counts(&result, function);
+
+    print_json(serde_json::json!({
+        "schema": "radare3.afi.v1",
+        "function": {
+            "id": function.id.0,
+            "entry": function.entry.0,
+            "name": function.name,
+            "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+            "block_count": function.blocks.len(),
+            "xrefs_in": incoming,
+            "xrefs_out": outgoing,
+        }
     }))
 }
 
@@ -449,6 +513,120 @@ fn agf_json(path: &str, requested: Option<&str>) -> Result<(), String> {
     }))
 }
 
+fn xrefs_to(path: &str, requested: &str, json: bool) -> Result<(), String> {
+    query_xrefs(path, requested, true, json)
+}
+
+fn xrefs_from(path: &str, requested: &str, json: bool) -> Result<(), String> {
+    query_xrefs(path, requested, false, json)
+}
+
+fn query_xrefs(path: &str, requested: &str, incoming: bool, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+    let address = parse_address(requested)?;
+
+    let matches = result
+        .xrefs
+        .iter()
+        .filter(|xref| {
+            if incoming {
+                xref.to == address
+            } else {
+                xref.from == address
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if json {
+        let refs = matches
+            .iter()
+            .map(|xref| {
+                serde_json::json!({
+                    "id": xref.id.0,
+                    "from": xref.from.0,
+                    "to": xref.to.0,
+                    "kind": xref_kind_name(xref.kind),
+                })
+            })
+            .collect::<Vec<_>>();
+        let schema = if incoming {
+            "radare3.axt.v1"
+        } else {
+            "radare3.axf.v1"
+        };
+        return print_json(serde_json::json!({
+            "schema": schema,
+            "address": address.0,
+            "xrefs": refs,
+        }));
+    }
+
+    for xref in matches {
+        if incoming {
+            println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
+        } else {
+            println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_function<'a>(
+    image: &radare3::image::BinaryImage,
+    result: &'a AnalysisResult,
+    requested: Option<&str>,
+) -> Result<&'a radare3::cfg::Function, String> {
+    let address = match requested {
+        Some(value) => parse_address(value)?,
+        None => image
+            .entry_point
+            .ok_or_else(|| "binary has no entry point; pass a function address".to_string())?,
+    };
+
+    result
+        .cfg
+        .functions
+        .values()
+        .find(|function| function.entry == address)
+        .ok_or_else(|| format!("no discovered function at {address}"))
+}
+
+fn function_xref_counts(
+    result: &AnalysisResult,
+    function: &radare3::cfg::Function,
+) -> (usize, usize) {
+    let incoming = result
+        .xrefs
+        .iter()
+        .filter(|xref| xref.to == function.entry)
+        .count();
+
+    let outgoing = result
+        .xrefs
+        .iter()
+        .filter(|xref| function_contains_address(result, function, xref.from))
+        .count();
+
+    (incoming, outgoing)
+}
+
+fn function_contains_address(
+    result: &AnalysisResult,
+    function: &radare3::cfg::Function,
+    address: Address,
+) -> bool {
+    function.blocks.iter().any(|block_id| {
+        result
+            .cfg
+            .blocks
+            .get(block_id)
+            .is_some_and(|block| address >= block.start && address < block.end)
+    })
+}
+
 fn verify(path: &str) -> Result<(), String> {
     let image = load(path)?;
     ensure_x86_64(&image)?;
@@ -603,6 +781,14 @@ const fn fidelity_name(fidelity: radare3::types::Fidelity) -> &'static str {
     }
 }
 
+const fn xref_kind_name(kind: radare3::xref::XrefKind) -> &'static str {
+    match kind {
+        radare3::xref::XrefKind::Call => "call",
+        radare3::xref::XrefKind::Code => "code",
+        radare3::xref::XrefKind::Data => "data",
+    }
+}
+
 const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
     match encoding {
         StringEncoding::Ascii => "ascii",
@@ -631,8 +817,14 @@ fn route_native(path: &str, command: &str) -> Result<(), String> {
     match head {
         "afl" => require_no_extra(parts, "afl").and_then(|()| afl(path, false)),
         "aflj" => require_no_extra(parts, "aflj").and_then(|()| afl_json(path)),
+        "afi" => route_optional_function_info(path, parts, false),
+        "afij" => route_optional_function_info(path, parts, true),
         "agf" => route_optional_address(path, parts, false),
         "agfj" => route_optional_address(path, parts, true),
+        "axt" => route_required_xref_address(path, parts, true, false),
+        "axtj" => route_required_xref_address(path, parts, true, true),
+        "axf" => route_required_xref_address(path, parts, false, false),
+        "axfj" => route_required_xref_address(path, parts, false, true),
         "izz" => route_optional_minimum(path, parts, false),
         "izzj" => route_optional_minimum(path, parts, true),
         "/x" => route_pattern(path, parts, false),
@@ -693,6 +885,43 @@ fn require_no_extra<'a>(
         return Err(format!("{command} does not accept routed arguments"));
     }
     Ok(())
+}
+
+fn route_optional_function_info<'a>(
+    path: &str,
+    mut parts: impl Iterator<Item = &'a str>,
+    json: bool,
+) -> Result<(), String> {
+    let address = parts.next();
+    if parts.next().is_some() {
+        return Err("afi/afij accept at most one function address".to_string());
+    }
+
+    if json {
+        afi_json(path, address)
+    } else {
+        afi(path, address)
+    }
+}
+
+fn route_required_xref_address<'a>(
+    path: &str,
+    mut parts: impl Iterator<Item = &'a str>,
+    incoming: bool,
+    json: bool,
+) -> Result<(), String> {
+    let address = parts
+        .next()
+        .ok_or_else(|| "xref commands require an address".to_string())?;
+    if parts.next().is_some() {
+        return Err("xref commands accept exactly one address".to_string());
+    }
+
+    if incoming {
+        xrefs_to(path, address, json)
+    } else {
+        xrefs_from(path, address, json)
+    }
 }
 
 fn route_optional_address<'a>(
