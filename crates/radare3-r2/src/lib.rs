@@ -28,8 +28,8 @@ impl R2Compatibility for DefaultR2Compatibility {
 
         match head {
             "afl" | "afi" | "afij" | "agf" | "izz" | "/x" | "/xj" | "aflj" | "agfj" | "izzj"
-            | "ij" | "axt" | "axtj" | "axf" | "axfj" => CommandDisposition::Native,
-            "aaa" | "pdf" | "is" | "iS" | "px" | "s" => CommandDisposition::Fallback,
+            | "ij" | "iS" | "iSj" | "axt" | "axtj" | "axf" | "axfj" => CommandDisposition::Native,
+            "aaa" | "pdf" | "is" | "px" | "pxj" | "s" => CommandDisposition::Fallback,
             _ => CommandDisposition::Unsupported,
         }
     }
@@ -170,6 +170,8 @@ mod tests {
             "agfj",
             "izzj",
             "ij",
+            "iS",
+            "iSj",
             "axt",
             "axtj",
             "axf",
@@ -187,7 +189,7 @@ mod tests {
     fn classifies_known_fallback_commands() {
         let router = DefaultR2Compatibility;
 
-        for command in ["aaa", "pdf", "is", "iS", "px 64", "s 0x401000"] {
+        for command in ["aaa", "pdf", "is", "px 64", "pxj 64", "s 0x401000"] {
             assert_eq!(
                 router.classify_command(command),
                 CommandDisposition::Fallback,

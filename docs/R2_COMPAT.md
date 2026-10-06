@@ -34,8 +34,8 @@ These are recognized as useful r2 commands but are not yet implemented natively:
 aaa
 pdf
 is
-iS
 px
+pxj
 s
 ```
 
@@ -105,3 +105,17 @@ The remaining fallback surface can be replaced one command at a time as native e
 The current native `axt` and `axf` query the exact address against radare3's current analysis xref set. They do not yet claim every stateful or heuristic behavior of radare2's richer xref database.
 
 `afi` resolves a discovered function by entry address (or the binary entry point by default), reports block count, incoming xrefs to the function entry, and outgoing xrefs whose source address lies inside one of the function's canonical blocks.
+
+
+## Sections and byte views
+
+`iS` and `iSj` are now native because they map directly to radare3's normalized segment model.
+
+The standalone CLI also provides stateless byte views:
+
+```sh
+radare3 px <file> <address> [length]
+radare3 pxj <file> <address> [length]
+```
+
+Routed `px`/`pxj` remain radare2 fallbacks because r2's command semantics depend on the session seek state. radare3 does not pretend a one-shot CLI address is the same thing as a persistent r2 seek cursor.

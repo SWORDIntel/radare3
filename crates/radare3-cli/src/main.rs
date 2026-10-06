@@ -39,6 +39,14 @@ fn main() {
             Some(path) => info_json(&path),
             None => Err("ij requires a file path".to_string()),
         },
+        Some("iS") => match args.next() {
+            Some(path) => sections(&path, false),
+            None => Err("iS requires a file path".to_string()),
+        },
+        Some("iSj") => match args.next() {
+            Some(path) => sections(&path, true),
+            None => Err("iSj requires a file path".to_string()),
+        },
         Some("decode") => match (args.next(), args.next()) {
             (Some(path), Some(address)) => decode(&path, &address),
             _ => Err("decode requires a file path and virtual address".to_string()),
@@ -111,6 +119,14 @@ fn main() {
             (Some(path), Some(pattern)) => search_bytes_json(&path, &pattern),
             _ => Err("/xj requires a file path and hexadecimal pattern".to_string()),
         },
+        Some("px") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => hexdump(&path, &address, args.next().as_deref(), false),
+            _ => Err("px requires a file path and address".to_string()),
+        },
+        Some("pxj") => match (args.next(), args.next()) {
+            (Some(path), Some(address)) => hexdump(&path, &address, args.next().as_deref(), true),
+            _ => Err("pxj requires a file path and address".to_string()),
+        },
         Some("route") => match args.next() {
             Some(path) => {
                 let command = args.collect::<Vec<_>>().join(" ");
@@ -129,7 +145,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -207,6 +223,52 @@ fn info_json(path: &str) -> Result<(), String> {
         "function_seed_count": image.function_seeds.len(),
         "segments": segments,
     }))
+}
+
+fn sections(path: &str, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+
+    if json {
+        let segments = image
+            .segments
+            .iter()
+            .map(|segment| {
+                serde_json::json!({
+                    "name": segment.name,
+                    "address": segment.address.0,
+                    "file_offset": segment.file_offset,
+                    "file_size": segment.file_size,
+                    "memory_size": segment.memory_size,
+                    "permissions": {
+                        "read": segment.permissions.read,
+                        "write": segment.permissions.write,
+                        "execute": segment.permissions.execute,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return print_json(serde_json::json!({
+            "schema": "radare3.sections.v1",
+            "segments": segments,
+        }));
+    }
+
+    for segment in &image.segments {
+        println!(
+            "{} {} file=0x{:x}+0x{:x} mem=0x{:x} r{}w{}x{}",
+            segment.name,
+            segment.address,
+            segment.file_offset,
+            segment.file_size,
+            segment.memory_size,
+            u8::from(segment.permissions.read),
+            u8::from(segment.permissions.write),
+            u8::from(segment.permissions.execute),
+        );
+    }
+
+    Ok(())
 }
 
 fn decode(path: &str, address: &str) -> Result<(), String> {
@@ -792,6 +854,62 @@ const fn string_encoding_name(encoding: StringEncoding) -> &'static str {
     }
 }
 
+fn hexdump(path: &str, requested: &str, length: Option<&str>, json: bool) -> Result<(), String> {
+    let image = load(path)?;
+    let address = parse_address(requested)?;
+    let length = parse_length(length)?;
+    let bytes = image
+        .bytes_at(address, length)
+        .ok_or_else(|| format!("address {address} is not file-backed"))?;
+
+    if json {
+        return print_json(serde_json::json!({
+            "schema": "radare3.px.v1",
+            "address": address.0,
+            "requested_length": length,
+            "length": bytes.len(),
+            "bytes_hex": hex_bytes(bytes),
+        }));
+    }
+
+    for (line, chunk) in bytes.chunks(16).enumerate() {
+        let offset = u64::try_from(line)
+            .ok()
+            .and_then(|line| line.checked_mul(16))
+            .ok_or_else(|| "hex dump address overflow".to_string())?;
+        let line_address = address
+            .0
+            .checked_add(offset)
+            .ok_or_else(|| "hex dump address overflow".to_string())?;
+        let hex = chunk
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii = chunk
+            .iter()
+            .map(|byte| {
+                if matches!(*byte, 0x20..=0x7e) {
+                    char::from(*byte)
+                } else {
+                    '.'
+                }
+            })
+            .collect::<String>();
+        println!("0x{line_address:016x}  {hex:<47}  {ascii}");
+    }
+
+    Ok(())
+}
+
+fn parse_length(value: Option<&str>) -> Result<usize, String> {
+    let value = match value {
+        Some(value) => parse_address(value)?.0,
+        None => 64,
+    };
+    usize::try_from(value).map_err(|_| "length does not fit this platform".to_string())
+}
+
 fn route_command(path: &str, command: &str) -> Result<(), String> {
     if command.trim().is_empty() {
         return Err("route requires a non-empty command".to_string());
@@ -826,6 +944,8 @@ fn route_native(path: &str, command: &str) -> Result<(), String> {
         "/x" => route_pattern(path, parts, false),
         "/xj" => route_pattern(path, parts, true),
         "ij" => require_no_extra(parts, "ij").and_then(|()| info_json(path)),
+        "iS" => require_no_extra(parts, "iS").and_then(|()| sections(path, false)),
+        "iSj" => require_no_extra(parts, "iSj").and_then(|()| sections(path, true)),
         _ => Err(format!("native route missing implementation for {head}")),
     }
 }
