@@ -98,6 +98,8 @@ jobs:
 
           test "$(grep -c 'session-analysis=miss' /tmp/r3-session.err)" -eq 1
           test "$(grep -c 'session-analysis=hit' /tmp/r3-session.err)" -eq 5
+          test "$(grep -c 'session-function-index=miss' /tmp/r3-session.err)" -eq 1
+          test "$(grep -c 'session-function-index=hit' /tmp/r3-session.err)" -eq 2
           test "$(grep -c 'session-xref-index=miss' /tmp/r3-session.err)" -eq 1
           test "$(grep -c 'session-xref-index=hit' /tmp/r3-session.err)" -eq 1
           grep -q 'mode=session' /tmp/r3-session.err
