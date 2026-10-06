@@ -33,6 +33,48 @@ jobs:
           ./scripts/build-benchmark-corpus.sh >/dev/null
           cargo run -q -p radare3-cli -- search .radare3/corpus/r3bench-o0 524144415245335f5345415243485f4d41524b4552 > /tmp/r3-search-hits
           test "$(wc -l < /tmp/r3-search-hits)" -ge 2
+      - name: Cache and JSON integration smoke
+        run: |
+          cargo build -q -p radare3-cli
+          r3="./target/debug/radare3"
+          target=".radare3/corpus/r3bench-o0"
+          cache_dir=".radare3/ci-cache"
+
+          rm -rf "$cache_dir"
+          "$r3" afl-cache "$target" "$cache_dir" > /tmp/r3-cache-first.out 2> /tmp/r3-cache-first.err
+          "$r3" afl-cache "$target" "$cache_dir" > /tmp/r3-cache-second.out 2> /tmp/r3-cache-second.err
+          cmp /tmp/r3-cache-first.out /tmp/r3-cache-second.out
+          grep -q 'cache=miss' /tmp/r3-cache-first.err
+          grep -q 'cache=hit' /tmp/r3-cache-second.err
+
+          "$r3" ij "$target" > /tmp/r3-ij.json
+          "$r3" aflj "$target" > /tmp/r3-aflj.json
+          "$r3" agfj "$target" > /tmp/r3-agfj.json
+          "$r3" izzj "$target" > /tmp/r3-izzj.json
+          "$r3" /xj "$target" 524144415245335f5345415243485f4d41524b4552 > /tmp/r3-xj.json
+
+          python3 - <<'PY'
+          import json
+
+          expected = {
+              "/tmp/r3-ij.json": "radare3.info.v1",
+              "/tmp/r3-aflj.json": "radare3.afl.v1",
+              "/tmp/r3-agfj.json": "radare3.agf.v1",
+              "/tmp/r3-izzj.json": "radare3.izz.v1",
+              "/tmp/r3-xj.json": "radare3.search.v1",
+          }
+
+          for path, schema in expected.items():
+              with open(path, encoding="utf-8") as handle:
+                  payload = json.load(handle)
+              assert payload["schema"] == schema, (path, payload.get("schema"))
+
+          with open("/tmp/r3-aflj.json", encoding="utf-8") as handle:
+              assert json.load(handle)["functions"]
+
+          with open("/tmp/r3-xj.json", encoding="utf-8") as handle:
+              assert len(json.load(handle)["hits"]) >= 2
+          PY
       - name: Benchmark tooling syntax
         run: |
           bash -n scripts/run-benchmark-campaign.sh
