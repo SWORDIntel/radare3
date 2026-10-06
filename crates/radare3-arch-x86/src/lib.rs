@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use iced_x86::{
-    Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind,
-};
+use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
@@ -165,12 +163,10 @@ mod tests {
     }
 
     #[test]
-    fn fast_disassembly_preserves_addresses_lengths_and_text() -> Result<(), Box<dyn std::error::Error>> {
+    fn fast_disassembly_preserves_addresses_lengths_and_text()
+    -> Result<(), Box<dyn std::error::Error>> {
         let instructions = IcedX86Decoder::x86_64()
-            .disassemble(
-                Address(0x401000),
-                &[0x55, 0x48, 0x89, 0xe5, 0xc3],
-            )
+            .disassemble(Address(0x401000), &[0x55, 0x48, 0x89, 0xe5, 0xc3])
             .map_err(|error| format!("disassembly failed: {error:?}"))?;
 
         assert_eq!(instructions.len(), 3);
