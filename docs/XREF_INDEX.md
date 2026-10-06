@@ -48,3 +48,13 @@ Analysis remains the source of truth; the index is discarded with the session an
 This is intended for immutable CFG block ranges. A function's outgoing-xref count can be computed by summing the count for each canonical block instead of scanning the complete xref vector.
 
 Empty or reversed ranges return zero.
+
+
+## Session `afi` counts
+
+Session `afi/afij` now uses both derived indexes:
+
+- incoming xrefs: `incoming_count(function.entry)`
+- outgoing xrefs: sum of `outgoing_count_in_range(block.start, block.end)` across the function's canonical blocks
+
+The one-shot command path remains unchanged as a simple reference path.
