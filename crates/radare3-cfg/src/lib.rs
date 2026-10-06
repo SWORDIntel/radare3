@@ -46,11 +46,7 @@ impl FunctionIndex {
         self.by_entry.get(&entry).copied()
     }
 
-    pub fn function<'a>(
-        &self,
-        cfg: &'a ControlFlowGraph,
-        entry: Address,
-    ) -> Option<&'a Function> {
+    pub fn function<'a>(&self, cfg: &'a ControlFlowGraph, entry: Address) -> Option<&'a Function> {
         self.function_id(entry)
             .and_then(|id| cfg.functions.get(&id))
     }
@@ -138,6 +134,6 @@ mod tests {
 
         assert!(index.is_empty());
         assert_eq!(index.len(), 0);
-        assert_eq!(index.function(Address(0x1000)), None);
+        assert_eq!(index.function(&cfg, Address(0x1000)), None);
     }
 }
