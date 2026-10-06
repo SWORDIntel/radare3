@@ -19,6 +19,7 @@ pub struct DecodedInstruction {
     pub length: u8,
     pub flow: FlowKind,
     pub target: Option<Address>,
+    pub data_target: Option<Address>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

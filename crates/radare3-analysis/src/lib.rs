@@ -473,6 +473,14 @@ fn discover_function<D: Decoder>(
             };
             let next = Address(next_raw);
 
+            if let Some(target) = decoded.data_target {
+                insert_xref(
+                    &mut xrefs,
+                    (decoded.address, target, XrefKindKey::Data),
+                    options.max_xrefs,
+                )?;
+            }
+
             match decoded.flow {
                 FlowKind::Fallthrough | FlowKind::Unknown => {
                     current = next;
@@ -787,6 +795,7 @@ fn worse_fidelity(left: Fidelity, right: Fidelity) -> Fidelity {
 enum XrefKindKey {
     Call,
     Code,
+    Data,
 }
 
 impl From<XrefKindKey> for XrefKind {
@@ -794,6 +803,7 @@ impl From<XrefKindKey> for XrefKind {
         match value {
             XrefKindKey::Call => Self::Call,
             XrefKindKey::Code => Self::Code,
+            XrefKindKey::Data => Self::Data,
         }
     }
 }
@@ -832,18 +842,21 @@ mod tests {
                     length: 5,
                     flow: FlowKind::Call,
                     target: Some(Address(0x1010)),
+                    data_target: Some(Address(0x2000)),
                 },
                 (0x1005, 0x75) => DecodedInstruction {
                     address,
                     length: 2,
                     flow: FlowKind::ConditionalBranch,
                     target: Some(Address(0x100a)),
+                    data_target: None,
                 },
                 (_, 0xc3) => DecodedInstruction {
                     address,
                     length: 1,
                     flow: FlowKind::Return,
                     target: None,
+                    data_target: None,
                 },
                 _ => return Err(DecodeError::InvalidInstruction),
             };
@@ -888,7 +901,7 @@ mod tests {
     fn assert_expected(result: &AnalysisResult) -> Result<(), AnalysisError> {
         assert_eq!(result.cfg.functions.len(), 2);
         assert_eq!(result.cfg.blocks.len(), 4);
-        assert_eq!(result.xrefs.len(), 2);
+        assert_eq!(result.xrefs.len(), 3);
 
         let entries: Vec<_> = result
             .cfg
@@ -925,9 +938,12 @@ mod tests {
         assert_eq!(result.xrefs[0].from, Address(0x1000));
         assert_eq!(result.xrefs[0].to, Address(0x1010));
         assert_eq!(result.xrefs[0].kind, XrefKind::Call);
-        assert_eq!(result.xrefs[1].from, Address(0x1005));
-        assert_eq!(result.xrefs[1].to, Address(0x100a));
-        assert_eq!(result.xrefs[1].kind, XrefKind::Code);
+        assert_eq!(result.xrefs[1].from, Address(0x1000));
+        assert_eq!(result.xrefs[1].to, Address(0x2000));
+        assert_eq!(result.xrefs[1].kind, XrefKind::Data);
+        assert_eq!(result.xrefs[2].from, Address(0x1005));
+        assert_eq!(result.xrefs[2].to, Address(0x100a));
+        assert_eq!(result.xrefs[2].kind, XrefKind::Code);
 
         Ok(())
     }
