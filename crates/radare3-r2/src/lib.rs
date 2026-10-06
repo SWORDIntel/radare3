@@ -27,9 +27,12 @@ impl R2Compatibility for DefaultR2Compatibility {
         };
 
         match head {
-            "afl" | "agf" | "izz" | "/x" => CommandDisposition::Native,
-            "aaa" | "afi" | "pdf" | "axt" | "axf" | "is" | "iS" | "px" | "s" | "/xj" | "aflj"
-            | "agfj" | "izzj" | "ij" => CommandDisposition::Fallback,
+            "afl" | "agf" | "izz" | "/x" | "/xj" | "aflj" | "agfj" | "izzj" | "ij" => {
+                CommandDisposition::Native
+            }
+            "aaa" | "afi" | "pdf" | "axt" | "axf" | "is" | "iS" | "px" | "s" => {
+                CommandDisposition::Fallback
+            }
             _ => CommandDisposition::Unsupported,
         }
     }
@@ -157,7 +160,18 @@ mod tests {
     fn classifies_native_commands() {
         let router = DefaultR2Compatibility;
 
-        for command in ["afl", "agf", "izz", "/x", "/x 7f454c46"] {
+        for command in [
+            "afl",
+            "agf",
+            "izz",
+            "/x",
+            "/x 7f454c46",
+            "/xj",
+            "aflj",
+            "agfj",
+            "izzj",
+            "ij",
+        ] {
             assert_eq!(
                 router.classify_command(command),
                 CommandDisposition::Native,
@@ -180,11 +194,6 @@ mod tests {
             "iS",
             "px 64",
             "s 0x401000",
-            "/xj 7f454c46",
-            "aflj",
-            "agfj",
-            "izzj",
-            "ij",
         ] {
             assert_eq!(
                 router.classify_command(command),
