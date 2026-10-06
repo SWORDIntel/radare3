@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
-use iced_x86::{Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind};
+use iced_x86::{
+    Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind, Register,
+};
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
-pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v2-data-xrefs";
+pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v3-absolute-data-xrefs";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisassembledInstruction {
@@ -87,9 +89,7 @@ impl Decoder for IcedX86Decoder {
             }
             _ => None,
         };
-        let data_target = instruction
-            .is_ip_rel_memory_operand()
-            .then(|| Address(instruction.ip_rel_memory_address()));
+        let data_target = memory_data_target(&instruction);
 
         Ok(DecodedInstruction {
             address,
@@ -98,6 +98,24 @@ impl Decoder for IcedX86Decoder {
             target,
             data_target,
         })
+    }
+}
+
+fn memory_data_target(instruction: &iced_x86::Instruction) -> Option<Address> {
+    if instruction.is_ip_rel_memory_operand() {
+        return Some(Address(instruction.ip_rel_memory_address()));
+    }
+
+    let has_explicit_memory =
+        (0..instruction.op_count()).any(|operand| instruction.op_kind(operand) == OpKind::Memory);
+
+    if has_explicit_memory
+        && instruction.memory_base() == Register::None
+        && instruction.memory_index() == Register::None
+    {
+        Some(Address(instruction.memory_displacement64()))
+    } else {
+        None
     }
 }
 
@@ -158,6 +176,36 @@ mod tests {
         assert_eq!(decoded.flow, FlowKind::Fallthrough);
         assert_eq!(decoded.target, None);
         assert_eq!(decoded.data_target, Some(Address(0x40223b)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_absolute_memory_data_target() -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = IcedX86Decoder::x86_64()
+            .decode(
+                Address(0x401000),
+                &[0x48, 0x8b, 0x04, 0x25, 0x78, 0x56, 0x34, 0x12],
+            )
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(decoded.length, 8);
+        assert_eq!(decoded.flow, FlowKind::Fallthrough);
+        assert_eq!(decoded.target, None);
+        assert_eq!(decoded.data_target, Some(Address(0x1234_5678)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn register_based_memory_does_not_claim_absolute_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = IcedX86Decoder::x86_64()
+            .decode(Address(0x401000), &[0x48, 0x8b, 0x43, 0x20])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(decoded.length, 4);
+        assert_eq!(decoded.data_target, None);
 
         Ok(())
     }
