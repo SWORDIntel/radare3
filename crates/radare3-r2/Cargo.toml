@@ -5,5 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+radare3-cfg.workspace = true
+radare3-types.workspace = true
+radare3-xref.workspace = true
+
 [lints]
 workspace = true
