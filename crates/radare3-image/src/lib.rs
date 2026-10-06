@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -94,6 +95,41 @@ pub struct Import {
     pub name: String,
     pub ordinal: Option<u16>,
     pub kind: ImportKind,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ImportIndex {
+    by_slot: BTreeMap<Address, usize>,
+}
+
+impl ImportIndex {
+    pub fn build(imports: &[Import]) -> Self {
+        let mut by_slot = BTreeMap::new();
+
+        for (position, import) in imports.iter().enumerate() {
+            if let Some(slot) = import.slot {
+                by_slot.entry(slot).or_insert(position);
+            }
+        }
+
+        Self { by_slot }
+    }
+
+    pub fn position(&self, slot: Address) -> Option<usize> {
+        self.by_slot.get(&slot).copied()
+    }
+
+    pub fn import<'a>(&self, imports: &'a [Import], slot: Address) -> Option<&'a Import> {
+        self.position(slot).and_then(|position| imports.get(position))
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_slot.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_slot.is_empty()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,6 +373,67 @@ mod tests {
             Some("puts")
         );
         assert_eq!(image.import_at_slot(Address(0x2008)), None);
+    }
+
+    #[test]
+    fn import_index_resolves_first_canonical_slot_entry() {
+        let imports = vec![
+            Import {
+                slot: Some(Address(0x2000)),
+                library: Some("a.dll".to_string()),
+                name: "first".to_string(),
+                ordinal: None,
+                kind: ImportKind::Function,
+            },
+            Import {
+                slot: Some(Address(0x2000)),
+                library: Some("b.dll".to_string()),
+                name: "second".to_string(),
+                ordinal: None,
+                kind: ImportKind::Function,
+            },
+            Import {
+                slot: Some(Address(0x3000)),
+                library: None,
+                name: "third".to_string(),
+                ordinal: None,
+                kind: ImportKind::Object,
+            },
+            Import {
+                slot: None,
+                library: None,
+                name: "noslot".to_string(),
+                ordinal: None,
+                kind: ImportKind::Other,
+            },
+        ];
+        let index = ImportIndex::build(&imports);
+
+        assert_eq!(index.len(), 2);
+        assert!(!index.is_empty());
+        assert_eq!(index.position(Address(0x2000)), Some(0));
+        assert_eq!(
+            index
+                .import(&imports, Address(0x2000))
+                .map(|import| import.name.as_str()),
+            Some("first")
+        );
+        assert_eq!(
+            index
+                .import(&imports, Address(0x3000))
+                .map(|import| import.name.as_str()),
+            Some("third")
+        );
+        assert_eq!(index.import(&imports, Address(0x4000)), None);
+    }
+
+    #[test]
+    fn empty_import_index_is_empty() {
+        let index = ImportIndex::build(&[]);
+
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+        assert_eq!(index.position(Address(0x2000)), None);
     }
 
     #[test]
