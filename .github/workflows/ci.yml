@@ -101,7 +101,7 @@ jobs:
           test "$(grep -c 'session-function-index=miss' /tmp/r3-session.err)" -eq 1
           test "$(grep -c 'session-function-index=hit' /tmp/r3-session.err)" -eq 2
           test "$(grep -c 'session-xref-index=miss' /tmp/r3-session.err)" -eq 1
-          test "$(grep -c 'session-xref-index=hit' /tmp/r3-session.err)" -eq 1
+          test "$(grep -c 'session-xref-index=hit' /tmp/r3-session.err)" -eq 2
           grep -q 'mode=session' /tmp/r3-session.err
           grep -q '"schema":"radare3.afi.v1"' /tmp/r3-session.out
           grep -q '"schema":"radare3.agf.v1"' /tmp/r3-session.out
