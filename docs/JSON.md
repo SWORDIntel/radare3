@@ -32,8 +32,8 @@ radare3.afl.v1
 radare3.afi.v1
 radare3.pdf.v1
 radare3.agf.v1
-radare3.axt.v1
-radare3.axf.v1
+radare3.axt.v2
+radare3.axf.v2
 radare3.izz.v1
 radare3.search.v1
 ```
@@ -58,3 +58,8 @@ izzj
 ```
 
 Future schema changes require a new schema suffix instead of silently mutating an existing `.v1` contract.
+
+
+### Xref import annotation
+
+`radare3.axt.v2` and `radare3.axf.v2` add an `import` field to each xref. It is either `null` or a normalized import object when the xref target matches a known import slot.
