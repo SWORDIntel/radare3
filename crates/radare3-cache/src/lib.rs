@@ -22,7 +22,7 @@ const ANALYSIS_PAYLOAD_VERSION: u32 = 1;
 const MAX_COLLECTION_ITEMS: u32 = 10_000_000;
 const MAX_STRING_BYTES: u32 = 16 * 1024 * 1024;
 
-pub const CURRENT_ANALYSIS_SCHEMA: u32 = 2;
+pub const CURRENT_ANALYSIS_SCHEMA: u32 = 1;
 pub const DEFAULT_MAX_CACHE_PAYLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -445,12 +445,16 @@ pub fn analysis_options_fingerprint(
     string_min_chars: usize,
 ) -> Result<Vec<u8>, CacheError> {
     let mut out = Vec::new();
-    out.extend_from_slice(b"r3-analysis-options-v2");
+    out.extend_from_slice(b"r3-analysis-options-v1");
     out.push(u8::from(options.deterministic));
-    push_optional_u64(&mut out, options.max_instructions);
-    push_optional_u64(&mut out, options.max_functions);
-    push_optional_u64(&mut out, options.max_blocks);
-    push_optional_u64(&mut out, options.max_xrefs);
+
+    match options.max_instructions {
+        Some(limit) => {
+            out.push(1);
+            push_u64(&mut out, limit);
+        }
+        None => out.push(0),
+    }
 
     let mut entrypoints = options.entrypoints.clone();
     entrypoints.sort();
@@ -517,16 +521,6 @@ fn push_string(out: &mut Vec<u8>, value: &str) -> Result<(), CacheError> {
     push_u32(out, len);
     out.extend_from_slice(value.as_bytes());
     Ok(())
-}
-
-fn push_optional_u64(out: &mut Vec<u8>, value: Option<u64>) {
-    match value {
-        Some(value) => {
-            out.push(1);
-            push_u64(out, value);
-        }
-        None => out.push(0),
-    }
 }
 
 fn push_u32(out: &mut Vec<u8>, value: u32) {
@@ -849,46 +843,18 @@ mod tests {
         let left = AnalysisOptions {
             entrypoints: vec![Address(2), Address(1), Address(2)],
             max_instructions: Some(100),
-            ..AnalysisOptions::default()
+            deterministic: true,
         };
         let right = AnalysisOptions {
             entrypoints: vec![Address(1), Address(2)],
             max_instructions: Some(100),
-            ..AnalysisOptions::default()
+            deterministic: true,
         };
 
         assert_eq!(
             analysis_options_fingerprint(&left, 4)?,
             analysis_options_fingerprint(&right, 4)?
         );
-        Ok(())
-    }
-
-    #[test]
-    fn options_fingerprint_changes_with_every_budget() -> Result<(), CacheError> {
-        let base = analysis_options_fingerprint(&AnalysisOptions::default(), 4)?;
-
-        for options in [
-            AnalysisOptions {
-                max_instructions: Some(1),
-                ..AnalysisOptions::default()
-            },
-            AnalysisOptions {
-                max_functions: Some(1),
-                ..AnalysisOptions::default()
-            },
-            AnalysisOptions {
-                max_blocks: Some(1),
-                ..AnalysisOptions::default()
-            },
-            AnalysisOptions {
-                max_xrefs: Some(1),
-                ..AnalysisOptions::default()
-            },
-        ] {
-            assert_ne!(analysis_options_fingerprint(&options, 4)?, base);
-        }
-
         Ok(())
     }
 

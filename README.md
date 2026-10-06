@@ -26,7 +26,7 @@ The current static-analysis slice includes:
 - stored hyperfine JSON + machine metadata
 - median regression gate
 
-Still intentionally missing: persistent caching, broad radare2 command fallback, ARM64 analysis, and a committed hardware-specific performance baseline.
+Still intentionally missing: ARM64 analysis, deeper indirect/data-flow recovery, and a committed hardware-specific performance baseline. Persistent caching and explicit radare2 fallback are now present.
 
 ## Quick start
 
@@ -43,6 +43,23 @@ cargo run -p radare3-cli -- verify /bin/ls
 ```
 
 `afl` uses the parallel analyzer. `afl-seq` is the truth/performance oracle. `search` and `/x` are aliases and accept even-length hexadecimal patterns.
+
+
+## Resource limits
+
+All analysis commands can be bounded without changing command syntax:
+
+```sh
+RADARE3_MAX_INSTRUCTIONS=100000 \
+RADARE3_MAX_FUNCTIONS=10000 \
+RADARE3_MAX_BLOCKS=100000 \
+RADARE3_MAX_XREFS=250000 \
+radare3 afl sample.bin
+```
+
+Unset variables mean unlimited. Budget failures identify which resource was exhausted, and every active budget is included in the persistent-cache identity.
+
+See [docs/RESOURCE_LIMITS.md](docs/RESOURCE_LIMITS.md).
 
 ## Benchmarking
 

@@ -300,16 +300,25 @@ fn decode(path: &str, address: &str) -> Result<(), String> {
 fn analyze_parallel(
     image: &radare3::image::BinaryImage,
 ) -> Result<radare3::analysis::AnalysisResult, String> {
+    let options = analysis_options_from_env()?;
+    analyze_parallel_with_options(image, &options)
+}
+
+fn analyze_parallel_with_options(
+    image: &radare3::image::BinaryImage,
+    options: &AnalysisOptions,
+) -> Result<radare3::analysis::AnalysisResult, String> {
     ParallelAnalyzer::new(IcedX86Decoder::x86_64())
-        .analyze(image, &AnalysisOptions::default())
+        .analyze(image, options)
         .map_err(|error| format!("analysis failed: {error:?}"))
 }
 
 fn analyze_sequential(
     image: &radare3::image::BinaryImage,
 ) -> Result<radare3::analysis::AnalysisResult, String> {
+    let options = analysis_options_from_env()?;
     RecursiveAnalyzer::new(IcedX86Decoder::x86_64())
-        .analyze(image, &AnalysisOptions::default())
+        .analyze(image, &options)
         .map_err(|error| format!("analysis failed: {error:?}"))
 }
 
@@ -398,7 +407,7 @@ fn afl_cached(path: &str, cache_dir: Option<&str>) -> Result<(), String> {
     let image = load(path)?;
     ensure_x86_64(&image)?;
 
-    let options = AnalysisOptions::default();
+    let options = analysis_options_from_env()?;
     let string_min_chars = 4;
     let fingerprint = analysis_options_fingerprint(&options, string_min_chars)
         .map_err(|error| format!("cache fingerprint failed: {error:?}"))?;
@@ -445,9 +454,7 @@ fn build_cache_snapshot(
     cache: &FileCache,
     key: CacheKey,
 ) -> Result<AnalysisSnapshot, String> {
-    let analysis = ParallelAnalyzer::new(IcedX86Decoder::x86_64())
-        .analyze(image, options)
-        .map_err(|error| format!("analysis failed: {error:?}"))?;
+    let analysis = analyze_parallel_with_options(image, options)?;
     let strings = extract_strings(image, string_min_chars);
     let snapshot = AnalysisSnapshot::new(analysis, strings);
     let payload = snapshot
@@ -1118,6 +1125,31 @@ fn parse_hex(value: &str) -> Result<Vec<u8>, String> {
                 .map_err(|error| format!("invalid hex byte {text}: {error}"))
         })
         .collect()
+}
+
+fn analysis_options_from_env() -> Result<AnalysisOptions, String> {
+    Ok(AnalysisOptions {
+        max_instructions: env_limit("RADARE3_MAX_INSTRUCTIONS")?,
+        max_functions: env_limit("RADARE3_MAX_FUNCTIONS")?,
+        max_blocks: env_limit("RADARE3_MAX_BLOCKS")?,
+        max_xrefs: env_limit("RADARE3_MAX_XREFS")?,
+        ..AnalysisOptions::default()
+    })
+}
+
+fn env_limit(name: &str) -> Result<Option<u64>, String> {
+    match std::env::var(name) {
+        Ok(value) => {
+            let value = value
+                .parse::<u64>()
+                .map_err(|error| format!("invalid {name}={value:?}: {error}"))?;
+            Ok(Some(value))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(format!("{name} contains non-Unicode data"))
+        }
+    }
 }
 
 fn ensure_x86_64(image: &radare3::image::BinaryImage) -> Result<(), String> {
