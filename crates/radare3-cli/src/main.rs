@@ -1273,7 +1273,7 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
             require_session_end(parts, head)?;
             state.ensure_analysis()?;
             let address = session_requested_address(state.seek, requested.as_deref())?;
-            render_session_afi(&state.image, state.analysis()?, address, head == "afij")?;
+            render_session_afi(state.analysis()?, address, head == "afij")?;
             Ok(true)
         }
         "agf" | "agfj" => {
