@@ -22,4 +22,14 @@ jobs:
       - name: Test
         run: cargo test --workspace
       - name: Benchmark regression checker self-test
-        run: python3 scripts/check-benchmark-regression.py benchmarks/testdata/baseline.json benchmarks/testdata/current-ok.json --threshold 5
+        run: |
+          python3 scripts/check-benchmark-regression.py benchmarks/testdata/baseline.json benchmarks/testdata/current-ok.json --threshold 5
+          if python3 scripts/check-benchmark-regression.py benchmarks/testdata/baseline.json benchmarks/testdata/current-bad.json --threshold 5; then
+            echo "expected regression fixture to fail" >&2
+            exit 1
+          fi
+      - name: Benchmark corpus and search smoke
+        run: |
+          ./scripts/build-benchmark-corpus.sh >/dev/null
+          cargo run -q -p radare3-cli -- search .radare3/corpus/r3bench-o0 524144415245335f5345415243485f4d41524b4552 > /tmp/r3-search-hits
+          test "$(wc -l < /tmp/r3-search-hits)" -ge 2
