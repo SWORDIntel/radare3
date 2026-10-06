@@ -1258,10 +1258,43 @@ fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, 
             render_hexdump(&state.image, state.seek, length, head == "pxj")?;
             Ok(true)
         }
-        "afl" => {
-            require_session_end(parts, "afl")?;
+        "afl" | "aflj" => {
+            require_session_end(parts, head)?;
             state.ensure_analysis()?;
-            print_afl_result(state.analysis()?, "session");
+            if head == "aflj" {
+                render_session_afl_json(state.analysis()?)?;
+            } else {
+                print_afl_result(state.analysis()?, "session");
+            }
+            Ok(true)
+        }
+        "afi" | "afij" => {
+            let requested = parts.next().map(str::to_owned);
+            require_session_end(parts, head)?;
+            state.ensure_analysis()?;
+            let address = session_requested_address(state.seek, requested.as_deref())?;
+            render_session_afi(state.analysis()?, address, head == "afij")?;
+            Ok(true)
+        }
+        "agf" | "agfj" => {
+            let requested = parts.next().map(str::to_owned);
+            require_session_end(parts, head)?;
+            state.ensure_analysis()?;
+            let address = session_requested_address(state.seek, requested.as_deref())?;
+            render_session_agf(state.analysis()?, address, head == "agfj")?;
+            Ok(true)
+        }
+        "axt" | "axtj" | "axf" | "axfj" => {
+            let requested = parts.next().map(str::to_owned);
+            require_session_end(parts, head)?;
+            state.ensure_analysis()?;
+            let address = session_requested_address(state.seek, requested.as_deref())?;
+            render_session_xrefs(
+                state.analysis()?,
+                address,
+                head.starts_with("axt"),
+                head.ends_with('j'),
+            )?;
             Ok(true)
         }
         "pdf" | "pdfj" => {
@@ -1300,9 +1333,183 @@ fn require_session_end<'a>(
 
 fn print_session_help() {
     println!(
-        "session commands: s [address], px [length], pxj [length], afl, \
+        "session commands: s [address], px [length], pxj [length], afl, aflj, \
+afi [address], afij [address], agf [address], agfj [address], \
+axt [address], axtj [address], axf [address], axfj [address], \
 pdf [function-address], pdfj [function-address], info, ij, iS, iSj, is, isj, ii, iij, ?, q"
     );
+}
+
+fn session_requested_address(seek: Address, requested: Option<&str>) -> Result<Address, String> {
+    match requested {
+        Some(value) => parse_address(value),
+        None => Ok(seek),
+    }
+}
+
+fn render_session_afl_json(result: &AnalysisResult) -> Result<(), String> {
+    let functions = result
+        .cfg
+        .functions
+        .values()
+        .map(|function| {
+            serde_json::json!({
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+                "block_count": function.blocks.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    print_json(serde_json::json!({
+        "schema": "radare3.afl.v1",
+        "fidelity": fidelity_name(result.fidelity),
+        "functions": functions,
+    }))
+}
+
+fn resolve_session_function(
+    result: &AnalysisResult,
+    address: Address,
+) -> Result<&radare3::cfg::Function, String> {
+    result
+        .cfg
+        .functions
+        .values()
+        .find(|function| function.entry == address)
+        .ok_or_else(|| format!("no discovered function at {address}"))
+}
+
+fn render_session_afi(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
+    let function = resolve_session_function(result, address)?;
+    let (incoming, outgoing) = function_xref_counts(result, function);
+
+    if json {
+        return print_json(serde_json::json!({
+            "schema": "radare3.afi.v1",
+            "function": {
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+                "block_count": function.blocks.len(),
+                "xrefs_in": incoming,
+                "xrefs_out": outgoing,
+            }
+        }));
+    }
+
+    println!(
+        "{} {} blocks={} xrefs_in={} xrefs_out={}",
+        function.entry,
+        function.name.as_deref().unwrap_or("unnamed"),
+        function.blocks.len(),
+        incoming,
+        outgoing
+    );
+    Ok(())
+}
+
+fn render_session_agf(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
+    let function = resolve_session_function(result, address)?;
+
+    if json {
+        let blocks = function
+            .blocks
+            .iter()
+            .map(|block_id| {
+                let block = result
+                    .cfg
+                    .blocks
+                    .get(block_id)
+                    .ok_or_else(|| "CFG contains a missing block reference".to_string())?;
+                Ok(serde_json::json!({
+                    "id": block.id.0,
+                    "start": block.start.0,
+                    "end": block.end.0,
+                    "successors": block.successors.iter().map(|id| id.0).collect::<Vec<_>>(),
+                }))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        return print_json(serde_json::json!({
+            "schema": "radare3.agf.v1",
+            "function": {
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "blocks": blocks,
+            }
+        }));
+    }
+
+    println!(
+        "{} {} blocks={}",
+        function.entry,
+        function.name.as_deref().unwrap_or("unnamed"),
+        function.blocks.len()
+    );
+    for block_id in &function.blocks {
+        let block = result
+            .cfg
+            .blocks
+            .get(block_id)
+            .ok_or_else(|| "CFG contains a missing block reference".to_string())?;
+        let successors = block
+            .successors
+            .iter()
+            .filter_map(|id| result.cfg.blocks.get(id))
+            .map(|successor| successor.start.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("  {}..{} -> [{}]", block.start, block.end, successors);
+    }
+    Ok(())
+}
+
+fn render_session_xrefs(
+    result: &AnalysisResult,
+    address: Address,
+    incoming: bool,
+    json: bool,
+) -> Result<(), String> {
+    let matches = result
+        .xrefs
+        .iter()
+        .filter(|xref| {
+            if incoming {
+                xref.to == address
+            } else {
+                xref.from == address
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if json {
+        let refs = matches
+            .iter()
+            .map(|xref| {
+                serde_json::json!({
+                    "id": xref.id.0,
+                    "from": xref.from.0,
+                    "to": xref.to.0,
+                    "kind": xref_kind_name(xref.kind),
+                })
+            })
+            .collect::<Vec<_>>();
+        return print_json(serde_json::json!({
+            "schema": if incoming { "radare3.axt.v1" } else { "radare3.axf.v1" },
+            "address": address.0,
+            "xrefs": refs,
+        }));
+    }
+
+    for xref in matches {
+        println!("{} {} -> {}", xref_kind_name(xref.kind), xref.from, xref.to);
+    }
+    Ok(())
 }
 
 fn render_session_metadata(

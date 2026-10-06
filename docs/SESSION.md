@@ -19,7 +19,7 @@ AnalysisOptions   resource policy captured at session start
 AnalysisResult    absent until first analysis-backed command
 ```
 
-The first `afl`/`pdf` command emits `session-analysis=miss` on stderr. Later analysis-backed commands emit `session-analysis=hit` and reuse the same result.
+The first analysis-backed command emits `session-analysis=miss` on stderr. Later `afl/afi/agf/axt/axf/pdf` queries emit `session-analysis=hit` and reuse the same result. Address-taking session queries default to the current seek when no address is supplied.
 
 ## Commands
 
@@ -27,7 +27,11 @@ The first `afl`/`pdf` command emits `session-analysis=miss` on stderr. Later ana
 s [address]                    show or change seek
 px [length]                    bytes at seek
 pxj [length]                   JSON bytes at seek
-afl                            function list
+afl / aflj                     function list
+afi / afij [address]            function information at address/seek
+agf / agfj [address]            CFG at address/seek
+axt / axtj [address]            incoming xrefs at address/seek
+axf / axfj [address]            outgoing xrefs at address/seek
 pdf [function-address]         CFG-backed function disassembly
 pdfj [function-address]        JSON CFG-backed disassembly
 info / ij                     binary metadata
