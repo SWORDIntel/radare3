@@ -33,3 +33,8 @@ jobs:
           ./scripts/build-benchmark-corpus.sh >/dev/null
           cargo run -q -p radare3-cli -- search .radare3/corpus/r3bench-o0 524144415245335f5345415243485f4d41524b4552 > /tmp/r3-search-hits
           test "$(wc -l < /tmp/r3-search-hits)" -ge 2
+      - name: Benchmark tooling syntax
+        run: |
+          bash -n scripts/run-benchmark-campaign.sh
+          bash -n scripts/profile-analysis.sh
+          python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py
