@@ -541,7 +541,10 @@ fn pdf(path: &str, requested: Option<&str>, json: bool) -> Result<(), String> {
                 let raw = image
                     .bytes_at(instruction.address, usize::from(instruction.length))
                     .ok_or_else(|| {
-                        format!("instruction {} is not fully file-backed", instruction.address)
+                        format!(
+                            "instruction {} is not fully file-backed",
+                            instruction.address
+                        )
                     })?;
                 instructions.push(serde_json::json!({
                     "block_id": block.id.0,
@@ -583,8 +586,8 @@ fn pdf(path: &str, requested: Option<&str>, json: bool) -> Result<(), String> {
             .0
             .checked_sub(block.start.0)
             .ok_or_else(|| "CFG block has an invalid address range".to_string())?;
-        let length =
-            usize::try_from(length).map_err(|_| "CFG block is too large to disassemble".to_string())?;
+        let length = usize::try_from(length)
+            .map_err(|_| "CFG block is too large to disassemble".to_string())?;
         let bytes = image
             .bytes_at(block.start, length)
             .ok_or_else(|| format!("block {} is not fully file-backed", block.start))?;
@@ -598,7 +601,10 @@ fn pdf(path: &str, requested: Option<&str>, json: bool) -> Result<(), String> {
             let raw = image
                 .bytes_at(instruction.address, usize::from(instruction.length))
                 .ok_or_else(|| {
-                    format!("instruction {} is not fully file-backed", instruction.address)
+                    format!(
+                        "instruction {} is not fully file-backed",
+                        instruction.address
+                    )
                 })?;
             println!(
                 "  {} {:<30} {}",
