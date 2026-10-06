@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "workload": "analysis",
+  "target": "benchmarks/fixtures/fixture.bin",
+  "target_size": 12345,
+  "target_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "results": "analysis-t2/analysis-fixture-20261006T000000Z.json",
+  "radare3_commit": "fixture",
+  "radare2_version": "fixture",
+  "host": {
+    "logical_cpus": 8,
+    "rayon_threads": "2"
+  }
+}

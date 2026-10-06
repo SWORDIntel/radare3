@@ -112,3 +112,23 @@ RAYON_NUM_THREADS=<count> ./scripts/profile-analysis.sh
 The profile directory contains `perf stat`, `perf record`, a text `perf report`, the target SHA-256, and the machine manifest. If `heaptrack` is installed, an allocation profile is attempted as a supplementary artifact.
 
 Profiling is diagnostic evidence, not a benchmark result. Optimize the largest measured costs first.
+
+
+## Thread-scaling summary
+
+A full campaign now produces `summary.json` and `summary.tsv` automatically.
+
+The summarizer uses the one-thread `radare3 parallel` median as the per-target baseline:
+
+```text
+speedup(N) = T1 / TN
+efficiency(N) = speedup(N) / N
+```
+
+Run it independently on an existing campaign:
+
+```sh
+python3 scripts/summarize-benchmark-campaign.py .radare3/campaign/<machine>
+```
+
+The JSON retains the parallel, sequential, and radare2 medians for each target/thread point so scaling can be inspected without losing the comparison context.
