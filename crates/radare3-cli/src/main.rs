@@ -155,6 +155,10 @@ fn main() {
             Some(path) => session(&path),
             None => Err("session requires a file path".to_string()),
         },
+        Some("export-r2") => match args.next() {
+            Some(path) => export_r2(&path),
+            None => Err("export-r2 requires a file path".to_string()),
+        },
         Some("route") => match args.next() {
             Some(path) => {
                 let command = args.collect::<Vec<_>>().join(" ");
@@ -173,7 +177,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 export-r2 <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -1880,6 +1884,16 @@ fn render_session_metadata(
         _ => return Err(format!("unsupported metadata command: {command}")),
     }
 
+    Ok(())
+}
+
+fn export_r2(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let result = analyze_parallel(&image)?;
+    let script = radare3::r2::export_analysis_script(&result.cfg, &result.xrefs)
+        .map_err(|error| format!("r2 export failed: {error:?}"))?;
+    print!("{script}");
     Ok(())
 }
 
