@@ -32,14 +32,25 @@ impl SearchEngine for FastSearchEngine {
                 .collect();
         }
 
-        memmem::find_iter(haystack, needle)
-            .filter_map(|offset| {
-                add_offset(base, offset).map(|address| SearchHit {
+        let finder = memmem::Finder::new(needle);
+        let mut hits = Vec::new();
+        let mut cursor = 0;
+
+        while cursor <= haystack.len().saturating_sub(needle.len()) {
+            let Some(relative) = finder.find(&haystack[cursor..]) else {
+                break;
+            };
+            let offset = cursor + relative;
+            if let Some(address) = add_offset(base, offset) {
+                hits.push(SearchHit {
                     address,
                     length: needle.len(),
-                })
-            })
-            .collect()
+                });
+            }
+            cursor = offset.saturating_add(1);
+        }
+
+        hits
     }
 }
 
