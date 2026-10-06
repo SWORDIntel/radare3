@@ -86,3 +86,29 @@ A preserved benchmark should capture:
 - A >5% median regression on a stable machine requires explanation or rollback.
 - Shared GitHub-hosted runners are validation infrastructure, not benchmark baselines.
 - radare2 function counts remain a coverage signal until analysis parity is materially closer.
+
+
+## Full benchmark campaign
+
+For a stable bare-metal machine:
+
+```sh
+MACHINE_ID=<machine> RUNS=20 THREADS="1 2 4 8 16 32" \
+  ./scripts/run-benchmark-campaign.sh
+```
+
+This captures a machine manifest once, runs the analysis benchmark across every requested thread count supported by the host, then runs literal-search benchmarks.
+
+See [benchmarks/BASELINE.md](../benchmarks/BASELINE.md).
+
+## Profiling
+
+Use the same representative target used for the baseline:
+
+```sh
+RAYON_NUM_THREADS=<count> ./scripts/profile-analysis.sh
+```
+
+The profile directory contains `perf stat`, `perf record`, a text `perf report`, the target SHA-256, and the machine manifest. If `heaptrack` is installed, an allocation profile is attempted as a supplementary artifact.
+
+Profiling is diagnostic evidence, not a benchmark result. Optimize the largest measured costs first.
