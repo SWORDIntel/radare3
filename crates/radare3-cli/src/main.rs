@@ -1382,11 +1382,7 @@ fn resolve_session_function(
         .ok_or_else(|| format!("no discovered function at {address}"))
 }
 
-fn render_session_afi(
-    result: &AnalysisResult,
-    address: Address,
-    json: bool,
-) -> Result<(), String> {
+fn render_session_afi(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
     let function = resolve_session_function(result, address)?;
     let (incoming, outgoing) = function_xref_counts(result, function);
 
@@ -1416,11 +1412,7 @@ fn render_session_afi(
     Ok(())
 }
 
-fn render_session_agf(
-    result: &AnalysisResult,
-    address: Address,
-    json: bool,
-) -> Result<(), String> {
+fn render_session_agf(result: &AnalysisResult, address: Address, json: bool) -> Result<(), String> {
     let function = resolve_session_function(result, address)?;
 
     if json {
@@ -1486,7 +1478,13 @@ fn render_session_xrefs(
     let matches = result
         .xrefs
         .iter()
-        .filter(|xref| if incoming { xref.to == address } else { xref.from == address })
+        .filter(|xref| {
+            if incoming {
+                xref.to == address
+            } else {
+                xref.from == address
+            }
+        })
         .collect::<Vec<_>>();
 
     if json {
