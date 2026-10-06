@@ -1,6 +1,6 @@
 # Data cross-references
 
-The x86-64 decoder now reports one allocation-free optional data target for RIP/EIP-relative memory operands.
+The x86/x86-64 decoder reports one allocation-free optional data target for directly resolvable memory operands.
 
 For an instruction such as:
 
@@ -18,9 +18,13 @@ This extends the existing call/code xref stream with `XrefKind::Data`.
 
 ## Scope
 
-This first data-xref pass intentionally covers RIP/EIP-relative memory addressing only. It does not yet claim:
+The current deterministic pass covers:
 
-- absolute-address recovery from arbitrary register state,
+- RIP/EIP-relative memory operands,
+- explicit absolute memory operands with no base or index register.
+
+It does not infer addresses that require register state. It still does not claim:
+
 - stack references,
 - pointer chasing,
 - jump-table resolution,
@@ -48,3 +52,20 @@ The slot itself is not treated as executable and is not added as a discovered ca
 Indirect jumps are not promoted to code xrefs merely because they use an IP-relative slot. Their eventual target is still unresolved.
 
 This changes analysis output, so the analysis cache schema is incremented.
+
+
+## Absolute memory operands
+
+An explicit memory operand with no base register and no index register is treated as an absolute data target:
+
+```text
+mov rax, [0x12345678]
+        │
+        └── Data xref -> 0x12345678
+```
+
+Memory such as `[rbx + 0x20]` is not promoted to an absolute xref because its runtime address depends on register state.
+
+The decoder still carries only one `Option<Address>`; this expansion does not add per-instruction heap allocation.
+
+The decoder semantic version is bumped from the RIP-relative implementation, which invalidates persistent cache identity automatically.
