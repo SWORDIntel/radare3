@@ -39,3 +39,12 @@ session-xref-index=miss
 and constructs the index from the already-canonical `AnalysisResult.xrefs`. Later xref queries emit `session-xref-index=hit` and reuse the same derived index.
 
 Analysis remains the source of truth; the index is discarded with the session and is never persisted in the content-addressed cache.
+
+
+## Range counts
+
+`outgoing_count_in_range(start, end)` counts xrefs whose source address is in the half-open interval `[start, end)`.
+
+This is intended for immutable CFG block ranges. A function's outgoing-xref count can be computed by summing the count for each canonical block instead of scanning the complete xref vector.
+
+Empty or reversed ranges return zero.
