@@ -962,7 +962,7 @@ mod tests {
 
         assert_eq!(
             RecursiveAnalyzer::new(TestDecoder).analyze(&image, &options),
-            Err(AnalysisError::BudgetExceeded)
+            Err(AnalysisError::BudgetExceeded(AnalysisBudget::Instructions))
         );
         assert_eq!(
             ParallelAnalyzer::new(TestDecoder).analyze(&image, &options),
