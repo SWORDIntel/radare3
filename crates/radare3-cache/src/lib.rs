@@ -130,16 +130,11 @@ impl FileCache {
     fn temp_path_for(&self, key: CacheKey) -> PathBuf {
         let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let final_path = self.path_for(key);
-        let file_name = format!(
-            ".{}.{}.{}.tmp",
-            key,
-            std::process::id(),
-            sequence
-        );
+        let file_name = format!(".{}.{}.{}.tmp", key, std::process::id(), sequence);
         final_path
             .parent()
-            .map(|parent| parent.join(file_name))
-            .unwrap_or_else(|| self.root.join(file_name))
+            .map(|parent| parent.join(&file_name))
+            .unwrap_or_else(|| self.root.join(&file_name))
     }
 }
 
@@ -235,7 +230,7 @@ impl AnalysisCache for FileCache {
 
         match fs::rename(&temp_path, &final_path) {
             Ok(()) => Ok(()),
-            Err(error) if final_path.try_exists()? => {
+            Err(_) if final_path.try_exists()? => {
                 let _ = fs::remove_file(&temp_path);
                 Ok(())
             }
@@ -356,7 +351,7 @@ mod tests {
         assert_eq!(cache.get(key)?, Some(payload.to_vec()));
 
         let path = cache.path_for(key);
-        fs::write(&path, b"corrupt")?;
+        fs::write(&path, b"NOTCACHE-corrupt")?;
         assert_eq!(cache.get(key), Err(CacheError::Corrupt));
 
         let _ = fs::remove_dir_all(root);
