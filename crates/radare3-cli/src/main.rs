@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 
 use radare3::analysis::{
     AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer,
@@ -151,6 +151,10 @@ fn main() {
             (Some(path), Some(address)) => hexdump(&path, &address, args.next().as_deref(), true),
             _ => Err("pxj requires a file path and address".to_string()),
         },
+        Some("session") => match args.next() {
+            Some(path) => session(&path),
+            None => Err("session requires a file path".to_string()),
+        },
         Some("route") => match args.next() {
             Some(path) => {
                 let command = args.collect::<Vec<_>>().join(" ");
@@ -169,7 +173,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -511,7 +515,16 @@ fn pdf(path: &str, requested: Option<&str>, json: bool) -> Result<(), String> {
     let image = load(path)?;
     ensure_x86_64(&image)?;
     let result = analyze_parallel(&image)?;
-    let function = resolve_function(&image, &result, requested)?;
+    render_pdf(&image, &result, requested, json)
+}
+
+fn render_pdf(
+    image: &radare3::image::BinaryImage,
+    result: &AnalysisResult,
+    requested: Option<&str>,
+    json: bool,
+) -> Result<(), String> {
+    let function = resolve_function(image, result, requested)?;
     let decoder = IcedX86Decoder::x86_64();
 
     if json {
@@ -1097,6 +1110,15 @@ fn hexdump(path: &str, requested: &str, length: Option<&str>, json: bool) -> Res
     let image = load(path)?;
     let address = parse_address(requested)?;
     let length = parse_length(length)?;
+    render_hexdump(&image, address, length, json)
+}
+
+fn render_hexdump(
+    image: &radare3::image::BinaryImage,
+    address: Address,
+    length: usize,
+    json: bool,
+) -> Result<(), String> {
     let bytes = image
         .bytes_at(address, length)
         .ok_or_else(|| format!("address {address} is not file-backed"))?;
@@ -1147,6 +1169,302 @@ fn parse_length(value: Option<&str>) -> Result<usize, String> {
         None => 64,
     };
     usize::try_from(value).map_err(|_| "length does not fit this platform".to_string())
+}
+
+struct SessionState {
+    image: radare3::image::BinaryImage,
+    analysis: Option<AnalysisResult>,
+    analysis_options: AnalysisOptions,
+    seek: Address,
+}
+
+impl SessionState {
+    fn ensure_analysis(&mut self) -> Result<(), String> {
+        if self.analysis.is_some() {
+            eprintln!("session-analysis=hit");
+            return Ok(());
+        }
+
+        ensure_x86_64(&self.image)?;
+        let result = analyze_parallel_with_options(&self.image, &self.analysis_options)?;
+        self.analysis = Some(result);
+        eprintln!("session-analysis=miss");
+        Ok(())
+    }
+
+    fn analysis(&self) -> Result<&AnalysisResult, String> {
+        self.analysis
+            .as_ref()
+            .ok_or_else(|| "session analysis is unavailable".to_string())
+    }
+}
+
+fn session(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    let analysis_options = analysis_options_from_env()?;
+    let seek = image.entry_point.unwrap_or(image.base_address);
+    let mut state = SessionState {
+        image,
+        analysis: None,
+        analysis_options,
+        seek,
+    };
+
+    eprintln!("session-open seek={}", state.seek);
+
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| format!("failed to read session input: {error}"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        match run_session_command(&mut state, line) {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => eprintln!("session: {error}"),
+        }
+    }
+
+    Ok(())
+}
+
+fn run_session_command(state: &mut SessionState, command: &str) -> Result<bool, String> {
+    let mut parts = command.split_ascii_whitespace();
+    let head = parts
+        .next()
+        .ok_or_else(|| "empty session command".to_string())?;
+
+    match head {
+        "q" | "quit" => Ok(false),
+        "?" | "help" => {
+            print_session_help();
+            Ok(true)
+        }
+        "s" => {
+            let address = parts.next();
+            require_session_end(parts, "s")?;
+            if let Some(address) = address {
+                state.seek = parse_address(address)?;
+            }
+            println!("{}", state.seek);
+            Ok(true)
+        }
+        "px" | "pxj" => {
+            let length = parts.next();
+            require_session_end(parts, head)?;
+            let length = parse_length(length)?;
+            render_hexdump(&state.image, state.seek, length, head == "pxj")?;
+            Ok(true)
+        }
+        "afl" => {
+            require_session_end(parts, "afl")?;
+            state.ensure_analysis()?;
+            print_afl_result(state.analysis()?, "session");
+            Ok(true)
+        }
+        "pdf" | "pdfj" => {
+            let requested = parts.next().map(str::to_owned);
+            require_session_end(parts, head)?;
+            state.ensure_analysis()?;
+            let default_address;
+            let requested = match requested.as_deref() {
+                Some(address) => Some(address),
+                None => {
+                    default_address = format!("0x{:x}", state.seek.0);
+                    Some(default_address.as_str())
+                }
+            };
+            render_pdf(&state.image, state.analysis()?, requested, head == "pdfj")?;
+            Ok(true)
+        }
+        "info" | "ij" | "iS" | "iSj" | "is" | "isj" | "ii" | "iij" => {
+            require_session_end(parts, head)?;
+            render_session_metadata(&state.image, head)?;
+            Ok(true)
+        }
+        _ => Err(format!("unsupported session command: {head}")),
+    }
+}
+
+fn require_session_end<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+    command: &str,
+) -> Result<(), String> {
+    if parts.next().is_some() {
+        return Err(format!("{command} received too many arguments"));
+    }
+    Ok(())
+}
+
+fn print_session_help() {
+    println!(
+        "session commands: s [address], px [length], pxj [length], afl, \
+pdf [function-address], pdfj [function-address], info, ij, iS, iSj, is, isj, ii, iij, ?, q"
+    );
+}
+
+fn render_session_metadata(
+    image: &radare3::image::BinaryImage,
+    command: &str,
+) -> Result<(), String> {
+    match command {
+        "info" => {
+            println!("format: {:?}", image.format);
+            println!("architecture: {:?}", image.architecture);
+            println!(
+                "storage: {}",
+                if image.is_mapped() { "mmap" } else { "owned" }
+            );
+            println!("base: {}", image.base_address);
+            match image.entry_point {
+                Some(entry) => println!("entry: {entry}"),
+                None => println!("entry: none"),
+            }
+            println!("segments: {}", image.segments.len());
+            println!("symbols: {}", image.symbols.len());
+            println!("imports: {}", image.imports.len());
+        }
+        "ij" => {
+            let segments = image
+                .segments
+                .iter()
+                .map(|segment| {
+                    serde_json::json!({
+                        "name": segment.name,
+                        "address": segment.address.0,
+                        "file_offset": segment.file_offset,
+                        "file_size": segment.file_size,
+                        "memory_size": segment.memory_size,
+                        "permissions": {
+                            "read": segment.permissions.read,
+                            "write": segment.permissions.write,
+                            "execute": segment.permissions.execute,
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_json(serde_json::json!({
+                "schema": "radare3.info.v1",
+                "format": format_name(image.format),
+                "architecture": architecture_name(image.architecture),
+                "storage": if image.is_mapped() { "mmap" } else { "owned" },
+                "base_address": image.base_address.0,
+                "entry_point": image.entry_point.map(|address| address.0),
+                "function_seed_count": image.function_seeds.len(),
+                "segments": segments,
+            }))?;
+        }
+        "iS" => {
+            for segment in &image.segments {
+                println!(
+                    "{} {} file=0x{:x}+0x{:x} mem=0x{:x} r{}w{}x{}",
+                    segment.name,
+                    segment.address,
+                    segment.file_offset,
+                    segment.file_size,
+                    segment.memory_size,
+                    u8::from(segment.permissions.read),
+                    u8::from(segment.permissions.write),
+                    u8::from(segment.permissions.execute),
+                );
+            }
+        }
+        "iSj" => {
+            let segments = image
+                .segments
+                .iter()
+                .map(|segment| {
+                    serde_json::json!({
+                        "name": segment.name,
+                        "address": segment.address.0,
+                        "file_offset": segment.file_offset,
+                        "file_size": segment.file_size,
+                        "memory_size": segment.memory_size,
+                        "permissions": {
+                            "read": segment.permissions.read,
+                            "write": segment.permissions.write,
+                            "execute": segment.permissions.execute,
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_json(serde_json::json!({
+                "schema": "radare3.sections.v1",
+                "segments": segments,
+            }))?;
+        }
+        "is" => {
+            for symbol in &image.symbols {
+                println!(
+                    "{} size={} {} {}",
+                    symbol.address,
+                    symbol.size,
+                    symbol_kind_name(symbol.kind),
+                    symbol.name
+                );
+            }
+        }
+        "isj" => {
+            let symbols = image
+                .symbols
+                .iter()
+                .map(|symbol| {
+                    serde_json::json!({
+                        "address": symbol.address.0,
+                        "size": symbol.size,
+                        "kind": symbol_kind_name(symbol.kind),
+                        "name": symbol.name,
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_json(serde_json::json!({
+                "schema": "radare3.symbols.v1",
+                "symbols": symbols,
+            }))?;
+        }
+        "ii" => {
+            for import in &image.imports {
+                println!(
+                    "{} {} {} {} ordinal={}",
+                    import
+                        .slot
+                        .map(|address| address.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    import_kind_name(import.kind),
+                    import.library.as_deref().unwrap_or("-"),
+                    import.name,
+                    import
+                        .ordinal
+                        .map(|ordinal| ordinal.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+            }
+        }
+        "iij" => {
+            let imports = image
+                .imports
+                .iter()
+                .map(|import| {
+                    serde_json::json!({
+                        "slot": import.slot.map(|address| address.0),
+                        "library": import.library,
+                        "name": import.name,
+                        "ordinal": import.ordinal,
+                        "kind": import_kind_name(import.kind),
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_json(serde_json::json!({
+                "schema": "radare3.imports.v1",
+                "imports": imports,
+            }))?;
+        }
+        _ => return Err(format!("unsupported metadata command: {command}")),
+    }
+
+    Ok(())
 }
 
 fn route_command(path: &str, command: &str) -> Result<(), String> {

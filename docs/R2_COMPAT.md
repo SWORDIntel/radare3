@@ -146,3 +146,12 @@ ELF imports are undefined named entries from `.dynsym`. They are deliberately em
 `pdf` and `pdfj` are native.
 
 They first run radare3 analysis, resolve a discovered function by entry address (or use the binary entry point), then format the canonical basic-block ranges belonging to that function. This deliberately avoids treating an arbitrary contiguous byte range as equivalent to a recovered function.
+
+
+## Native session state
+
+`radare3 session <file>` introduces a native persistent seek and a lazy in-memory analysis result without changing one-shot routing semantics.
+
+Inside a session, `s`, `px`, and `pxj` are native against the current seek. Analysis-backed commands such as `afl` and `pdf` compute analysis once and reuse it for subsequent commands.
+
+One-shot routed `s`/`px`/`pxj` remain radare2 fallbacks for now because a single routed command has no persistent native seek context.
