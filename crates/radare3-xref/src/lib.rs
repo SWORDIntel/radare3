@@ -69,6 +69,17 @@ impl XrefIndex {
         self.by_to.get(&address).map_or(0, Vec::len)
     }
 
+    pub fn outgoing_count_in_range(&self, start: Address, end: Address) -> usize {
+        if start >= end {
+            return 0;
+        }
+
+        self.by_from
+            .range(start..end)
+            .map(|(_, positions)| positions.len())
+            .sum()
+    }
+
     pub fn source_address_count(&self) -> usize {
         self.by_from.len()
     }
@@ -129,6 +140,22 @@ mod tests {
         assert_eq!(incoming, vec![XrefId(0), XrefId(2), XrefId(3)]);
         assert_eq!(index.outgoing_count(Address(0x1000)), 2);
         assert_eq!(index.incoming_count(Address(0x2000)), 3);
+        assert_eq!(
+            index.outgoing_count_in_range(Address(0x1000), Address(0x1200)),
+            3
+        );
+        assert_eq!(
+            index.outgoing_count_in_range(Address(0x1200), Address(0x1201)),
+            1
+        );
+        assert_eq!(
+            index.outgoing_count_in_range(Address(0x1200), Address(0x1200)),
+            0
+        );
+        assert_eq!(
+            index.outgoing_count_in_range(Address(0x1300), Address(0x1200)),
+            0
+        );
         assert_eq!(index.source_address_count(), 3);
         assert_eq!(index.target_address_count(), 2);
     }
