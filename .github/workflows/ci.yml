@@ -89,6 +89,17 @@ jobs:
           with open("/tmp/r3-xj.json", encoding="utf-8") as handle:
               assert len(json.load(handle)["hits"]) >= 2
           PY
+      - name: radare2 analysis export smoke
+        run: |
+          r3="./target/debug/radare3"
+          target=".radare3/corpus/r3bench-o0"
+
+          "$r3" export-r2 "$target" > /tmp/r3-export-r2.r2
+
+          grep -q '^af+ 0x' /tmp/r3-export-r2.r2
+          grep -q '^afb+ 0x' /tmp/r3-export-r2.r2
+          grep -Eq '^ax(C|c|d) 0x' /tmp/r3-export-r2.r2
+          ! grep -Eq '^(af-|af-\*|f-|f-\*)' /tmp/r3-export-r2.r2
       - name: Session reuse smoke
         run: |
           r3="./target/debug/radare3"
