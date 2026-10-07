@@ -127,6 +127,7 @@ jobs:
           bash -n scripts/profile-analysis.sh
           bash -n scripts/bench-session.sh
           bash -n scripts/bench-session-queries.sh
+          bash -n scripts/bench-resources.sh
           python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py scripts/summarize-benchmark-campaign.py
       - name: Benchmark scaling summary self-test
         run: |

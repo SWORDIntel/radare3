@@ -47,6 +47,14 @@ RUNS=20 ./scripts/bench-search.sh
 
 Both scripts require `hyperfine` and write JSON into `.radare3/bench/` by default. Each hyperfine result gets a sibling `.meta.json` with target SHA-256, file size, radare3 commit, radare2 version, CPU, kernel, logical CPU count, and Rayon thread setting.
 
+Resource behavior:
+
+```sh
+RUNS=10 RAYON_NUM_THREADS=8 ./scripts/bench-resources.sh
+```
+
+The resource benchmark uses GNU `/usr/bin/time` and stores raw per-run TSV samples for radare3 parallel, radare3 sequential, and radare2 analysis. Each sample records elapsed/user/system time, maximum RSS, minor and major page faults, and voluntary/involuntary context switches. It verifies radare3 structural equivalence before measuring.
+
 To preserve a significant run, copy the JSON and metadata into `benchmarks/results/<machine>/` in a dedicated benchmark commit.
 
 ## Regression gate
@@ -70,6 +78,7 @@ A preserved benchmark should capture:
 - format and architecture
 - workload
 - wall-clock samples and median
+- maximum RSS and page-fault behavior for preserved resource campaigns
 - functions / blocks / xrefs or search hits as appropriate
 - radare3 commit
 - radare2 version
@@ -97,7 +106,7 @@ MACHINE_ID=<machine> RUNS=20 THREADS="1 2 4 8 16 32" \
   ./scripts/run-benchmark-campaign.sh
 ```
 
-This captures a machine manifest once, runs the analysis benchmark across every requested thread count supported by the host, then runs literal-search benchmarks.
+This captures a machine manifest once, runs the analysis benchmark across every requested thread count supported by the host, then runs literal-search and resource-behavior benchmarks. Set `RESOURCE_RUNS` separately when the resource campaign should use fewer samples than the timing campaign.
 
 See [benchmarks/BASELINE.md](../benchmarks/BASELINE.md).
 

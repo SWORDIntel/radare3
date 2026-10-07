@@ -5,6 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 runs="${RUNS:-20}"
+resource_runs="${RESOURCE_RUNS:-$runs}"
 threads="${THREADS:-1 2 4 8 16 32}"
 machine="${MACHINE_ID:-$(hostname -s 2>/dev/null || hostname)}"
 machine="$(printf '%s' "$machine" | tr -cs 'A-Za-z0-9._-' '-')"
@@ -47,6 +48,12 @@ mkdir -p "$search_out"
 echo
 echo "== literal search =="
 RUNS="$runs" RESULT_DIR="$search_out" ./scripts/bench-search.sh "${targets[@]}"
+
+resource_out="$base_dir/resources"
+mkdir -p "$resource_out"
+echo
+echo "== resource behavior =="
+RUNS="$resource_runs" RESULT_DIR="$resource_out" ./scripts/bench-resources.sh "${targets[@]}"
 
 echo
 echo "== scaling summary =="

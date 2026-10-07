@@ -67,7 +67,8 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [ ] realistic multi-language ELF/PE corpus recipes
 - [ ] committed bare-metal baseline
 - [ ] representative perf/flamegraph/heap profiles
-- [ ] RSS/minor-fault/major-fault memory-ramp campaign
+- [x] RSS/minor-fault/major-fault resource benchmark harness
+- [ ] committed large-target memory-ramp campaign
 - [ ] workload-specific mmap advice experiments for linear scans vs CFG traversal
 - [ ] ranked bottleneck list from measured profiles
 
