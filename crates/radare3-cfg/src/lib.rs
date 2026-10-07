@@ -28,22 +28,29 @@ pub struct ControlFlowGraph {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FunctionIndex {
-    by_entry: BTreeMap<Address, FunctionId>,
+    by_entry: Vec<(Address, FunctionId)>,
 }
 
 impl FunctionIndex {
     pub fn build(cfg: &ControlFlowGraph) -> Self {
-        let by_entry = cfg
+        let mut by_entry = cfg
             .functions
             .values()
             .map(|function| (function.entry, function.id))
-            .collect();
+            .collect::<Vec<_>>();
+
+        by_entry.sort_unstable_by_key(|(entry, id)| (*entry, *id));
+        by_entry.dedup_by_key(|(entry, _)| *entry);
 
         Self { by_entry }
     }
 
     pub fn function_id(&self, entry: Address) -> Option<FunctionId> {
-        self.by_entry.get(&entry).copied()
+        self.by_entry
+            .binary_search_by_key(&entry, |(address, _)| *address)
+            .ok()
+            .and_then(|index| self.by_entry.get(index))
+            .map(|(_, id)| *id)
     }
 
     pub fn function<'a>(&self, cfg: &'a ControlFlowGraph, entry: Address) -> Option<&'a Function> {
