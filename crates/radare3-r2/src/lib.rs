@@ -92,7 +92,22 @@ fn export_function_name(function: &Function) -> String {
 
     let mut sanitized = String::with_capacity(raw.len());
     for character in raw.chars() {
-        if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '
+        if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':') {
+            sanitized.push(character);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    if sanitized.is_empty() {
+        format!("sub_{:x}", function.entry.0)
+    } else {
+        sanitized
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandDisposition {
     Native,
     Fallback,
     Unsupported,
