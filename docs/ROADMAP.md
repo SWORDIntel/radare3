@@ -40,14 +40,17 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] SIMD-backed literal search via `memchr`
 - [x] parallel deterministic string extraction
 - [x] derived xref source/target index
-- [x] xref source-range counts
-- [x] derived function-entry index
-- [x] derived import-slot index
+- [x] flat immutable xref descriptor/postings index
+- [x] prefix-count xref source-range queries
+- [x] flat immutable function-entry index
+- [x] flat immutable import-slot index
+- [x] one-pass file-backed segment translation for instruction byte access
 - [x] single-load interactive session
 - [x] lazy in-session analysis reuse
 - [x] lazy function/xref/import secondary-index reuse
 - [ ] first committed hardware-specific benchmark baseline
-- [ ] profile-driven address lookup acceleration if segment lookup is measured hot
+- [ ] profile-driven interval acceleration if one-pass linear segment lookup remains hot
+- [ ] evaluate freeze-time dense Vec CFG storage after profiling
 
 ## Phase 3 — Benchmark infrastructure
 
@@ -64,6 +67,8 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [ ] realistic multi-language ELF/PE corpus recipes
 - [ ] committed bare-metal baseline
 - [ ] representative perf/flamegraph/heap profiles
+- [ ] RSS/minor-fault/major-fault memory-ramp campaign
+- [ ] workload-specific mmap advice experiments for linear scans vs CFG traversal
 - [ ] ranked bottleneck list from measured profiles
 
 ## Phase 4 — Persistence
@@ -86,7 +91,7 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] explicit CLI routing with observable fallback
 - [x] native symbols/imports/sections/disassembly/xref/function/search paths
 - [x] persistent-seek session mode
-- [ ] radare2 analysis export
+- [x] radare2 analysis export
 - [ ] project/annotation interoperability
 - [ ] broader fallback replacement where native engines mature
 
@@ -132,11 +137,12 @@ This is the compact implementation-status view. The full engineering plan, relea
 ## Immediate execution queue
 
 1. Commit the first stable bare-metal benchmark campaign.
-2. Profile realistic binaries and rank hotspots.
-3. Keep only profile-supported hot-path changes.
+2. Profile realistic binaries and rank hotspots, including RSS and page-fault behavior.
+3. Keep only profile-supported hot-path changes; compare flat query indexes against their previous tree forms.
 4. Continue indirect-control-flow and relocation-backed data-reference recovery.
-5. Add r2 analysis export/project interoperability.
-6. Start ARM64 once the x86-64 substrate and performance evidence are stable.
+5. Add radare2 project/annotation interoperability.
+6. Add loader/cache/compatibility hostile-input fuzz campaigns.
+7. Start ARM64 once the x86-64 substrate and performance evidence are stable.
 
 Rule:
 

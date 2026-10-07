@@ -88,6 +88,28 @@ For unusually large executable mappings, the arena switches to a sparse set rath
 
 Functions, blocks, and xrefs use compact numeric IDs. IDs are not raw pointers and must be serializable.
 
+### Build for mutation, freeze for queries
+
+Discovery and canonicalization may use ordered maps and sets because deterministic insertion, merging, splitting, and validation are the priority there.
+
+After canonical facts are stable, derived query indexes should prefer immutable contiguous storage: sorted key descriptors, flat posting arrays, dense identifiers, and prefix counts. The query plane must not mutate canonical analysis to gain speed.
+
+This follows a strict rule:
+
+```text
+worker-local mutable discovery
+          ↓
+deterministic ordered merge
+          ↓
+      validation
+          ↓
+       freeze
+          ↓
+flat immutable query indexes
+```
+
+The tree representation remains a correctness-friendly construction tool. A flat representation is adopted only where tests prove semantic equivalence and benchmarks justify it.
+
 ### Compatibility is a boundary
 
 radare3 does not initially reimplement every radare2 feature. Unsupported commands, formats, architectures, debugging operations, and specialist plugins belong behind the compatibility boundary.
@@ -108,6 +130,8 @@ If a fast path produces incomplete or heuristic results, the result carries an e
 8. mmap-backed immutable storage. ✓
 9. parallel function discovery. ✓
 10. sequential/parallel differential validation. ✓
-11. SIMD search.
-12. persistent cache.
-13. radare2 import/export bridge.
+11. SIMD search. ✓
+12. persistent cache. ✓
+13. radare2 import/export bridge. ✓
+14. flat immutable function/import/xref query indexes. ✓
+15. bare-metal profiling and evidence-driven query-plane refinement.

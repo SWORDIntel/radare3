@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -99,24 +98,29 @@ pub struct Import {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ImportIndex {
-    by_slot: BTreeMap<Address, usize>,
+    by_slot: Vec<(Address, usize)>,
 }
 
 impl ImportIndex {
     pub fn build(imports: &[Import]) -> Self {
-        let mut by_slot = BTreeMap::new();
+        let mut by_slot = imports
+            .iter()
+            .enumerate()
+            .filter_map(|(position, import)| import.slot.map(|slot| (slot, position)))
+            .collect::<Vec<_>>();
 
-        for (position, import) in imports.iter().enumerate() {
-            if let Some(slot) = import.slot {
-                by_slot.entry(slot).or_insert(position);
-            }
-        }
+        by_slot.sort_unstable_by_key(|(slot, position)| (*slot, *position));
+        by_slot.dedup_by_key(|(slot, _)| *slot);
 
         Self { by_slot }
     }
 
     pub fn position(&self, slot: Address) -> Option<usize> {
-        self.by_slot.get(&slot).copied()
+        self.by_slot
+            .binary_search_by_key(&slot, |(address, _)| *address)
+            .ok()
+            .and_then(|index| self.by_slot.get(index))
+            .map(|(_, position)| *position)
     }
 
     pub fn import<'a>(&self, imports: &'a [Import], slot: Address) -> Option<&'a Import> {
@@ -272,16 +276,20 @@ impl BinaryImage {
         self.bytes.is_mapped()
     }
 
-    pub fn address_to_file_offset(&self, address: Address) -> Option<usize> {
-        self.segments.iter().find_map(|segment| {
-            if !segment.contains_file_address(address) {
-                return None;
-            }
+    fn file_backed_segment_and_offset(&self, address: Address) -> Option<(&Segment, usize)> {
+        let segment = self
+            .segments
+            .iter()
+            .find(|segment| segment.contains_file_address(address))?;
+        let delta = address.0.checked_sub(segment.address.0)?;
+        let offset = segment.file_offset.checked_add(delta)?;
+        let offset = usize::try_from(offset).ok()?;
+        Some((segment, offset))
+    }
 
-            let delta = address.0.checked_sub(segment.address.0)?;
-            let offset = segment.file_offset.checked_add(delta)?;
-            usize::try_from(offset).ok()
-        })
+    pub fn address_to_file_offset(&self, address: Address) -> Option<usize> {
+        self.file_backed_segment_and_offset(address)
+            .map(|(_, offset)| offset)
     }
 
     pub fn file_offset_to_address(&self, file_offset: u64) -> Option<Address> {
@@ -296,12 +304,7 @@ impl BinaryImage {
     }
 
     pub fn bytes_at(&self, address: Address, max_len: usize) -> Option<&[u8]> {
-        let segment = self
-            .segments
-            .iter()
-            .find(|segment| segment.contains_file_address(address))?;
-
-        let offset = self.address_to_file_offset(address)?;
+        let (segment, offset) = self.file_backed_segment_and_offset(address)?;
         let delta = address.0.checked_sub(segment.address.0)?;
         let remaining = segment.file_size.checked_sub(delta)?;
         let remaining = usize::try_from(remaining).ok()?;
