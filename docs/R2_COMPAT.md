@@ -155,3 +155,31 @@ They first run radare3 analysis, resolve a discovered function by entry address 
 Inside a session, `s`, `px`, and `pxj` are native against the current seek. Analysis-backed commands such as `afl` and `pdf` compute analysis once and reuse it for subsequent commands.
 
 One-shot routed `s`/`px`/`pxj` remain radare2 fallbacks for now because a single routed command has no persistent native seek context.
+
+
+## Analysis export
+
+`radare3 export-r2 <file>` emits a deterministic additive radare2 command script from radare3's canonical analysis.
+
+The current export contains:
+
+```text
+af+   discovered functions
+afb+  canonical basic blocks
+axC   call xrefs
+axc   code xrefs
+axd   data xrefs
+```
+
+Function names are sanitized to command-safe tokens and duplicate names receive a deterministic address suffix.
+
+The export deliberately emits no destructive reset commands such as `af-`, flag wipes, or project clears. It is intended to layer radare3 discovery into an existing radare2 workflow rather than erase analyst state.
+
+Example:
+
+```sh
+radare3 export-r2 sample.bin > sample.r2
+r2 -q -i sample.r2 sample.bin
+```
+
+Malformed CFG references or invalid block ranges fail export instead of generating a partial script.

@@ -1,10 +1,110 @@
 #![forbid(unsafe_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use radare3_cfg::{ControlFlowGraph, Function};
+use radare3_types::FunctionId;
+use radare3_xref::{Xref, XrefKind};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExportError {
+    MissingBlock,
+    InvalidBlockRange,
+}
+
+pub fn export_analysis_script(
+    cfg: &ControlFlowGraph,
+    xrefs: &[Xref],
+) -> Result<String, ExportError> {
+    let names = export_function_names(cfg);
+    let mut output = String::new();
+
+    for function in cfg.functions.values() {
+        let name = names
+            .get(&function.id)
+            .map(String::as_str)
+            .unwrap_or("r3_function");
+        output.push_str(&format!("af+ 0x{:x} {name}\n", function.entry.0));
+
+        for block_id in &function.blocks {
+            let block = cfg.blocks.get(block_id).ok_or(ExportError::MissingBlock)?;
+            let size = block
+                .end
+                .0
+                .checked_sub(block.start.0)
+                .ok_or(ExportError::InvalidBlockRange)?;
+            if size == 0 {
+                return Err(ExportError::InvalidBlockRange);
+            }
+            output.push_str(&format!(
+                "afb+ 0x{:x} 0x{:x} 0x{size:x}\n",
+                function.entry.0, block.start.0
+            ));
+        }
+    }
+
+    for xref in xrefs {
+        let command = match xref.kind {
+            XrefKind::Call => "axC",
+            XrefKind::Code => "axc",
+            XrefKind::Data => "axd",
+        };
+        output.push_str(&format!(
+            "{command} 0x{:x} 0x{:x}\n",
+            xref.to.0, xref.from.0
+        ));
+    }
+
+    Ok(output)
+}
+
+fn export_function_names(cfg: &ControlFlowGraph) -> BTreeMap<FunctionId, String> {
+    let mut used = BTreeSet::new();
+    let mut names = BTreeMap::new();
+
+    for function in cfg.functions.values() {
+        let base = export_function_name(function);
+        let mut candidate = base.clone();
+
+        if !used.insert(candidate.clone()) {
+            candidate = format!("{base}_r3_{:x}", function.entry.0);
+            used.insert(candidate.clone());
+        }
+
+        names.insert(function.id, candidate);
+    }
+
+    names
+}
+
+fn export_function_name(function: &Function) -> String {
+    let raw = function
+        .name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("sub_{:x}", function.entry.0));
+
+    let mut sanitized = String::with_capacity(raw.len());
+    for character in raw.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':') {
+            sanitized.push(character);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    if sanitized.is_empty() {
+        format!("sub_{:x}", function.entry.0)
+    } else {
+        sanitized
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandDisposition {
@@ -153,6 +253,134 @@ fn read_all(mut reader: impl Read) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn export_cfg() -> ControlFlowGraph {
+        use radare3_cfg::{BasicBlock, Function};
+        use radare3_types::{Address, BlockId, FunctionId};
+
+        ControlFlowGraph {
+            functions: BTreeMap::from([
+                (
+                    FunctionId(0),
+                    Function {
+                        id: FunctionId(0),
+                        entry: Address(0x1000),
+                        blocks: vec![BlockId(0)],
+                        name: Some("main function".to_string()),
+                    },
+                ),
+                (
+                    FunctionId(1),
+                    Function {
+                        id: FunctionId(1),
+                        entry: Address(0x2000),
+                        blocks: vec![BlockId(1)],
+                        name: Some("main function".to_string()),
+                    },
+                ),
+            ]),
+            blocks: BTreeMap::from([
+                (
+                    BlockId(0),
+                    BasicBlock {
+                        id: BlockId(0),
+                        start: Address(0x1000),
+                        end: Address(0x1010),
+                        successors: Vec::new(),
+                    },
+                ),
+                (
+                    BlockId(1),
+                    BasicBlock {
+                        id: BlockId(1),
+                        start: Address(0x2000),
+                        end: Address(0x2008),
+                        successors: Vec::new(),
+                    },
+                ),
+            ]),
+        }
+    }
+
+    #[test]
+    fn exports_deterministic_additive_r2_script() -> Result<(), ExportError> {
+        use radare3_types::{Address, XrefId};
+
+        let cfg = export_cfg();
+        let xrefs = vec![
+            Xref {
+                id: XrefId(0),
+                from: Address(0x1004),
+                to: Address(0x2000),
+                kind: XrefKind::Call,
+            },
+            Xref {
+                id: XrefId(1),
+                from: Address(0x1008),
+                to: Address(0x3000),
+                kind: XrefKind::Code,
+            },
+            Xref {
+                id: XrefId(2),
+                from: Address(0x100c),
+                to: Address(0x4000),
+                kind: XrefKind::Data,
+            },
+        ];
+
+        let script = export_analysis_script(&cfg, &xrefs)?;
+        assert_eq!(
+            script,
+            concat!(
+                "af+ 0x1000 main_function\n",
+                "afb+ 0x1000 0x1000 0x10\n",
+                "af+ 0x2000 main_function_r3_2000\n",
+                "afb+ 0x2000 0x2000 0x8\n",
+                "axC 0x2000 0x1004\n",
+                "axc 0x3000 0x1008\n",
+                "axd 0x4000 0x100c\n",
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn export_rejects_missing_block() -> Result<(), ExportError> {
+        use radare3_types::{BlockId, FunctionId};
+
+        let mut cfg = export_cfg();
+        let function = cfg
+            .functions
+            .get_mut(&FunctionId(0))
+            .ok_or(ExportError::MissingBlock)?;
+        function.blocks = vec![BlockId(99)];
+
+        assert_eq!(
+            export_analysis_script(&cfg, &[]),
+            Err(ExportError::MissingBlock)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn export_rejects_invalid_block_range() -> Result<(), ExportError> {
+        use radare3_types::{Address, BlockId};
+
+        let mut cfg = export_cfg();
+        let block = cfg
+            .blocks
+            .get_mut(&BlockId(0))
+            .ok_or(ExportError::MissingBlock)?;
+        block.start = Address(0x1010);
+        block.end = Address(0x1000);
+
+        assert_eq!(
+            export_analysis_script(&cfg, &[]),
+            Err(ExportError::InvalidBlockRange)
+        );
+        Ok(())
+    }
 
     #[test]
     fn classifies_native_commands() {
