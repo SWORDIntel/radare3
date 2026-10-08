@@ -1,5 +1,7 @@
 # Roadmap
 
+Cross-project delivery order for ISANITY, METHRA, radare3, and Angryier on KP14-SUITE / VM 9211: [Four-product unified roadmap](../../METHRA/docs/VM9211_CORE_ROADMAP.md). This file remains the source of truth for radare3-specific implementation status.
+
 This is the compact implementation-status view. The full engineering plan, release milestones, gates, and non-goals live in [MASTER_ROADMAP.md](MASTER_ROADMAP.md).
 
 ## Phase 0 — Scaffold
@@ -126,7 +128,10 @@ This is the compact implementation-status view. The full engineering plan, relea
 
 ## Phase 8 — Deep analysis and architecture expansion
 
+- [x] local versioned static-fact JSON export (`radare3.static.v1`)
 - [ ] Angryier handoff API
+- [ ] versioned KP14-SUITE handoff carrying binary identity, image base, architecture, canonical functions/CFG/xrefs/imports, target hints, provenance, and fidelity gaps
+- [ ] differential handoff fixtures against Ghidra discovery on representative Windows drivers
 - [ ] function fingerprints/signatures
 - [ ] binary diffing
 - [ ] type/calling-convention recovery experiments
@@ -144,6 +149,14 @@ This is the compact implementation-status view. The full engineering plan, relea
 5. Add radare2 project/annotation interoperability.
 6. Add loader/cache/compatibility hostile-input fuzz campaigns.
 7. Start ARM64 once the x86-64 substrate and performance evidence are stable.
+
+## KP14-SUITE integration order
+
+1. Export deterministic static facts through the versioned handoff; keep radare3 responsible for discovery, not symbolic execution.
+2. Let Angryier consume selected driver targets, including the capabilities currently implemented by KP14's POPKORN/angr path.
+3. Validate the exporter and Ghidra comparison fixtures in the radare3 checkout before connecting other tools.
+4. Let METHRA schedule bounded jobs and store evidence in QIHSE; KP14 owns the case workflow on VM 9211 after each tool passes its local gate.
+5. Evaluate Capstone only later as an optional decoder backend, using semantic differential fixtures and measured costs against the existing decoder path.
 
 Rule:
 

@@ -22,6 +22,7 @@ The current static-analysis slice includes:
 - ASCII and UTF-16LE string extraction across segments in parallel
 - SIMD-dispatched single-byte and substring search through `memchr`
 - native r2-style analysis, xref, symbols/imports, disassembly, strings, search, and JSON command paths
+- versioned static-fact export for future Angryier/KP14-SUITE handoff
 - single-load session mode with persistent seek and lazy in-memory analysis reuse
 - source-built benchmark corpus
 - stored hyperfine JSON + machine metadata
@@ -92,6 +93,9 @@ radare3 afl sample.bin
 Unset variables mean unlimited. Budget failures identify which resource was exhausted, and every active budget is included in the persistent-cache identity.
 
 See [docs/RESOURCE_LIMITS.md](docs/RESOURCE_LIMITS.md).
+
+`radare3 export-static <file>` emits deterministic static facts with binary
+identity and fidelity metadata. See [docs/STATIC_EXPORT.md](docs/STATIC_EXPORT.md).
 
 ## Benchmarking
 

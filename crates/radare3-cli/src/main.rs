@@ -17,6 +17,7 @@ use radare3::r2::{
 };
 use radare3::search::{StringEncoding, extract_strings, find_bytes};
 use radare3::types::{Address, Architecture};
+use sha2::{Digest, Sha256};
 
 fn main() {
     let mut args = std::env::args();
@@ -159,6 +160,10 @@ fn main() {
             Some(path) => export_r2(&path),
             None => Err("export-r2 requires a file path".to_string()),
         },
+        Some("export-static") => match args.next() {
+            Some(path) => export_static(&path),
+            None => Err("export-static requires a file path".to_string()),
+        },
         Some("route") => match args.next() {
             Some(path) => {
                 let command = args.collect::<Vec<_>>().join(" ");
@@ -177,7 +182,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 export-r2 <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 export-r2 <file>\n  radare3 export-static <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -1897,6 +1902,97 @@ fn export_r2(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn export_static(path: &str) -> Result<(), String> {
+    let image = load(path)?;
+    ensure_x86_64(&image)?;
+    let options = analysis_options_from_env()?;
+    let result = analyze_parallel_with_options(&image, &options)?;
+    print_json(static_export_json(&image, &result, &options))
+}
+
+fn static_export_json(
+    image: &radare3::image::BinaryImage,
+    result: &AnalysisResult,
+    options: &AnalysisOptions,
+) -> serde_json::Value {
+    let functions = result
+        .cfg
+        .functions
+        .values()
+        .map(|function| {
+            serde_json::json!({
+                "id": function.id.0,
+                "entry": function.entry.0,
+                "name": function.name,
+                "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let blocks = result
+        .cfg
+        .blocks
+        .values()
+        .map(|block| {
+            serde_json::json!({
+                "id": block.id.0,
+                "start": block.start.0,
+                "end": block.end.0,
+                "successor_ids": block.successors.iter().map(|id| id.0).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let xrefs = result
+        .xrefs
+        .iter()
+        .map(|xref| {
+            serde_json::json!({
+                "id": xref.id.0,
+                "from": xref.from.0,
+                "to": xref.to.0,
+                "kind": xref_kind_name(xref.kind),
+            })
+        })
+        .collect::<Vec<_>>();
+    let imports = image
+        .imports
+        .iter()
+        .map(|import| {
+            serde_json::json!({
+                "slot": import.slot.map(|address| address.0),
+                "library": import.library,
+                "name": import.name,
+                "ordinal": import.ordinal,
+                "kind": import_kind_name(import.kind),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "schema": "radare3.static.v1",
+        "producer": {"name": "radare3", "version": env!("CARGO_PKG_VERSION")},
+        "loader_semantics_version": LOADER_SEMANTICS_VERSION,
+        "decoder_semantics_version": DECODER_SEMANTICS_VERSION,
+        "binary_sha256": format!("{:x}", Sha256::digest(image.bytes())),
+        "format": format_name(image.format),
+        "architecture": architecture_name(image.architecture),
+        "base_address": image.base_address.0,
+        "entry_point": image.entry_point.map(|address| address.0),
+        "fidelity": fidelity_name(result.fidelity),
+        "analysis_options": {
+            "entrypoints": options.entrypoints.iter().map(|address| address.0).collect::<Vec<_>>(),
+            "max_instructions": options.max_instructions,
+            "max_functions": options.max_functions,
+            "max_blocks": options.max_blocks,
+            "max_xrefs": options.max_xrefs,
+            "deterministic": options.deterministic,
+        },
+        "functions": functions,
+        "blocks": blocks,
+        "xrefs": xrefs,
+        "imports": imports,
+    })
+}
+
 fn route_command(path: &str, command: &str) -> Result<(), String> {
     if command.trim().is_empty() {
         return Err("route requires a non-empty command".to_string());
@@ -2171,3 +2267,6 @@ fn parse_address(value: &str) -> Result<Address, String> {
         .map(Address)
         .map_err(|error| format!("invalid address {value}: {error}"))
 }
+
+#[cfg(test)]
+mod static_export_tests;
