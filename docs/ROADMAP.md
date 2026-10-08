@@ -1,6 +1,6 @@
 # Roadmap
 
-Cross-project delivery order for ISANITY, METHRA, radare3, and Angryier on KP14-SUITE / VM 9211: [Four-product unified roadmap](../../METHRA/docs/VM9211_CORE_ROADMAP.md). This file remains the source of truth for radare3-specific implementation status.
+Cross-project delivery order for ISANITY, METHRA, radare3, and Angryier on KP14-SUITE / VM 9211: [Four-product unified roadmap](https://github.com/SWORDIntel/METHRA/blob/main/docs/VM9211_CORE_ROADMAP.md). Shared instruction identities and semantics: [ISANITY](https://github.com/SWORDIntel/ISANITY). This file remains the source of truth for radare3-specific implementation status.
 
 This is the compact implementation-status view. The full engineering plan, release milestones, gates, and non-goals live in [MASTER_ROADMAP.md](MASTER_ROADMAP.md).
 
