@@ -18,8 +18,29 @@ pub const ICED_X86_DECODER_VERSION: &str = "1.21.0";
 pub struct DecodedInstructionWithCode {
     pub decoded: DecodedInstruction,
     pub code: Code,
+    /// Numeric discriminant of iced-x86's version-scoped `Code` enum.
+    pub code_discriminant: u32,
     pub code_name: String,
     pub decoder_version: &'static str,
+    /// No canonical ISANITY identity mapping is defined by this decoder yet.
+    pub canonical_isanity_id: Option<&'static str>,
+}
+
+/// Reproducible, provider-scoped observation for one decode request.
+///
+/// `input_bytes` retains the complete caller-supplied slice; `decoded_bytes`
+/// contains only the bytes consumed for this instruction. The Code identity
+/// is specific to the pinned iced-x86 version and is not canonical.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcedX86Observation {
+    pub address: Address,
+    pub bitness: u32,
+    pub input_bytes: Vec<u8>,
+    pub decoded_bytes: Vec<u8>,
+    pub code_discriminant: u32,
+    pub code_name: String,
+    pub decoder_version: &'static str,
+    pub decoded: DecodedInstruction,
     /// No canonical ISANITY identity mapping is defined by this decoder yet.
     pub canonical_isanity_id: Option<&'static str>,
 }
@@ -57,9 +78,34 @@ impl IcedX86Decoder {
         Ok(DecodedInstructionWithCode {
             decoded,
             code,
+            code_discriminant: code as u32,
             code_name: format!("{code:?}"),
             decoder_version: ICED_X86_DECODER_VERSION,
             canonical_isanity_id: None,
+        })
+    }
+
+    /// Decode a single instruction while retaining provider-scoped evidence.
+    pub fn observe(
+        &self,
+        address: Address,
+        bytes: &[u8],
+    ) -> Result<IcedX86Observation, DecodeError> {
+        let result = self.decode_with_code(address, bytes)?;
+        let decoded_bytes = bytes
+            .get(..result.decoded.length as usize)
+            .ok_or(DecodeError::InvalidInstruction)?
+            .to_vec();
+        Ok(IcedX86Observation {
+            address,
+            bitness: self.bitness,
+            input_bytes: bytes.to_vec(),
+            decoded_bytes,
+            code_discriminant: result.code_discriminant,
+            code_name: result.code_name,
+            decoder_version: result.decoder_version,
+            decoded: result.decoded,
+            canonical_isanity_id: result.canonical_isanity_id,
         })
     }
 
@@ -196,9 +242,28 @@ mod tests {
 
         assert_eq!(decoded.code_name, "Mov_rm64_r64");
         assert_eq!(decoded.code_name, format!("{:?}", decoded.code));
+        assert_eq!(decoded.code_discriminant, decoded.code as u32);
         assert_eq!(decoded.decoder_version, "1.21.0");
         assert_eq!(decoded.canonical_isanity_id, None);
         assert_eq!(decoded.decoded.length, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn observation_preserves_mode_complete_input_and_consumed_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let observation = IcedX86Decoder::x86_64()
+            .observe(Address(0x401000), &[0x48, 0x89, 0xe5, 0x90])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(observation.address, Address(0x401000));
+        assert_eq!(observation.bitness, 64);
+        assert_eq!(observation.input_bytes, [0x48, 0x89, 0xe5, 0x90]);
+        assert_eq!(observation.decoded_bytes, [0x48, 0x89, 0xe5]);
+        assert_eq!(observation.code_name, "Mov_rm64_r64");
+        assert_eq!(observation.code_discriminant, Code::Mov_rm64_r64 as u32);
+        assert_eq!(observation.decoder_version, ICED_X86_DECODER_VERSION);
+        assert_eq!(observation.canonical_isanity_id, None);
         Ok(())
     }
 

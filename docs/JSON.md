@@ -42,6 +42,30 @@ Addresses are emitted as numeric virtual addresses rather than presentation-form
 
 The JSON layer lives in the CLI. Core analysis types are not coupled to serde or a serialization framework.
 
+## Version-scoped x86 decode evidence
+
+`radare3 decode-evidence <32|64> <address> <hex-bytes>` emits one compact JSON observation for one instruction. For example:
+
+```sh
+radare3 decode-evidence 64 0x401000 4889e590
+```
+
+The `input_bytes_hex` field preserves the complete supplied byte slice, while
+`decoded_bytes_hex` records only the bytes consumed by the instruction. The
+observation includes the x86 mode, address, iced-x86 version, and both the
+version-scoped numeric `Code` discriminant and enum variant name. Neither is a
+cross-decoder identity: `canonical_isanity_id` is currently null, and
+`identity_scope` explicitly limits the provider identity to iced-x86. JSON
+object key order is not a compatibility guarantee; consumers should use the
+field names and schema string `radare3.iced-x86.decode-observation.v1`.
+For direct ISANITY ingestion, the same response also contains
+`isanity_observation`, a nested record shaped as
+`decode-observation-v1.schema.json` (schema version 1). Its
+`source_identifier.namespace` is `iced-x86::Code`; `name` and
+`numeric_value` are the pinned provider's enum name and discriminant. The CLI
+implements this stable field contract locally and does not read or depend on
+the neighboring ISANITY checkout at build time.
+
 ## Compatibility direction
 
 The compatibility router should classify these commands as native once this renderer is merged:

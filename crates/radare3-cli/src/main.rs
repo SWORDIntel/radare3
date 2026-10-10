@@ -68,6 +68,10 @@ fn main() {
             (Some(path), Some(address)) => decode(&path, &address),
             _ => Err("decode requires a file path and virtual address".to_string()),
         },
+        Some("decode-evidence") => match (args.next(), args.next(), args.next()) {
+            (Some(mode), Some(address), Some(bytes)) => decode_evidence(&mode, &address, &bytes),
+            _ => Err("decode-evidence requires <32|64> <address> <hex-bytes>".to_string()),
+        },
         Some("afl" | "analyze") => match args.next() {
             Some(path) => afl(&path, false),
             None => Err("afl requires a file path".to_string()),
@@ -182,7 +186,7 @@ fn main() {
 
 fn print_help() {
     println!(
-        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 export-r2 <file>\n  radare3 export-static <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
+        "radare3 {}\n\nUsage:\n  radare3 info <file>\n  radare3 ij <file>\n  radare3 iS <file>\n  radare3 iSj <file>\n  radare3 is <file>\n  radare3 isj <file>\n  radare3 ii <file>\n  radare3 iij <file>\n  radare3 decode <file> <address>\n  radare3 decode-evidence <32|64> <address> <hex-bytes>\n  radare3 afl <file>\n  radare3 aflj <file>\n  radare3 afi <file> [function-address]\n  radare3 afij <file> [function-address]\n  radare3 pdf <file> [function-address]\n  radare3 pdfj <file> [function-address]\n  radare3 afl-seq <file>\n  radare3 afl-cache <file> [cache-dir]\n  radare3 agf <file> [function-address]\n  radare3 agfj <file> [function-address]\n  radare3 axt <file> <address>\n  radare3 axtj <file> <address>\n  radare3 axf <file> <address>\n  radare3 axfj <file> <address>\n  radare3 izz <file> [min-chars]\n  radare3 izzj <file> [min-chars]\n  radare3 search <file> <hex-pattern>\n  radare3 /x <file> <hex-pattern>\n  radare3 /xj <file> <hex-pattern>\n  radare3 px <file> <address> [length]\n  radare3 pxj <file> <address> [length]\n  radare3 session <file>\n  radare3 export-r2 <file>\n  radare3 export-static <file>\n  radare3 route <file> <r2-style-command...>\n  radare3 verify <file>\n  radare3 --version",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -412,6 +416,69 @@ fn decode(path: &str, address: &str) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+fn decode_evidence(mode: &str, address: &str, bytes_hex: &str) -> Result<(), String> {
+    print_json(decode_evidence_json(mode, address, bytes_hex)?)
+}
+
+fn decode_evidence_json(
+    mode: &str,
+    address: &str,
+    bytes_hex: &str,
+) -> Result<serde_json::Value, String> {
+    let decoder = match mode {
+        "32" => IcedX86Decoder::x86(),
+        "64" => IcedX86Decoder::x86_64(),
+        _ => return Err("decode-evidence mode must be 32 or 64".to_string()),
+    };
+    let address = parse_address(address)?;
+    let input_bytes = parse_hex(bytes_hex)?;
+    let observation = decoder
+        .observe(address, &input_bytes)
+        .map_err(|error| format!("decode failed: {error:?}"))?;
+    let bytes_to_hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let isan_observation = serde_json::json!({
+        "schema_version": 1,
+        "record_kind": "decode-observation",
+        "provider": {
+            "name": "iced-x86",
+            "version": observation.decoder_version,
+        },
+        "architecture": "x86",
+        "execution_mode": format!("{}-bit", observation.bitness),
+        "input_bytes_hex": bytes_to_hex(&observation.input_bytes),
+        "result": {
+            "status": "decoded",
+            "consumed_bytes": observation.decoded.length,
+            "source_identifier": {
+                "namespace": "iced-x86::Code",
+                "name": observation.code_name.as_str(),
+                "numeric_value": observation.code_discriminant,
+            },
+        },
+        "canonical_form_id": null,
+    });
+    Ok(serde_json::json!({
+        "schema": "radare3.iced-x86.decode-observation.v1",
+        "provider": "iced-x86",
+        "decoder_version": observation.decoder_version,
+        "mode_bits": observation.bitness,
+        "address": format!("0x{:x}", observation.address.0),
+        "input_bytes_hex": bytes_to_hex(&observation.input_bytes),
+        "decoded_bytes_hex": bytes_to_hex(&observation.decoded_bytes),
+        "decoded_length": observation.decoded.length,
+        "code_discriminant": observation.code_discriminant,
+        "code_name": observation.code_name,
+        "canonical_isanity_id": observation.canonical_isanity_id,
+        "identity_scope": "provider-version-specific; not canonical",
+        "isanity_observation": isan_observation,
+    }))
 }
 
 fn analyze_parallel(
@@ -2270,3 +2337,52 @@ fn parse_address(value: &str) -> Result<Address, String> {
 
 #[cfg(test)]
 mod static_export_tests;
+
+#[cfg(test)]
+mod decode_evidence_tests {
+    use super::decode_evidence_json;
+
+    #[test]
+    fn emits_mode_and_version_scoped_instruction_evidence() -> Result<(), String> {
+        let json = decode_evidence_json("64", "0x401000", "48 89 e5 90")?;
+        assert_eq!(json["schema"], "radare3.iced-x86.decode-observation.v1");
+        assert_eq!(json["provider"], "iced-x86");
+        assert_eq!(json["decoder_version"], "1.21.0");
+        assert_eq!(json["mode_bits"], 64);
+        assert_eq!(json["address"], "0x401000");
+        assert_eq!(json["input_bytes_hex"], "4889e590");
+        assert_eq!(json["decoded_bytes_hex"], "4889e5");
+        assert_eq!(json["decoded_length"], 3);
+        assert_eq!(json["code_name"], "Mov_rm64_r64");
+        assert!(json["code_discriminant"].is_u64());
+        assert!(json["canonical_isanity_id"].is_null());
+        assert_eq!(
+            json["isanity_observation"],
+            serde_json::json!({
+                "schema_version": 1,
+                "record_kind": "decode-observation",
+                "provider": {"name": "iced-x86", "version": "1.21.0"},
+                "architecture": "x86",
+                "execution_mode": "64-bit",
+                "input_bytes_hex": "4889e590",
+                "result": {
+                    "status": "decoded",
+                    "consumed_bytes": 3,
+                    "source_identifier": {
+                        "namespace": "iced-x86::Code",
+                        "name": "Mov_rm64_r64",
+                        "numeric_value": 282,
+                    },
+                },
+                "canonical_form_id": null,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_mode_and_empty_bytes() {
+        assert!(decode_evidence_json("16", "0x0", "90").is_err());
+        assert!(decode_evidence_json("64", "0x0", "").is_err());
+    }
+}
