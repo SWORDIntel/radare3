@@ -24,11 +24,23 @@ fn static_export_preserves_identity_and_canonical_graph() {
         ordinal: None,
         kind: ImportKind::Function,
     });
-    image.function_seeds.push(FunctionSeed {
-        address: Address(0x0001_4000_1000),
-        kind: FunctionSeedKind::Symbol,
-        name: Some("dispatch".to_string()),
-    });
+    image.function_seeds.extend([
+        FunctionSeed {
+            address: Address(0x0001_4000_1000),
+            kind: FunctionSeedKind::Symbol,
+            name: Some("dispatch".to_string()),
+        },
+        FunctionSeed {
+            address: Address(0x0001_4000_1000),
+            kind: FunctionSeedKind::Export,
+            name: Some("dispatch_export".to_string()),
+        },
+        FunctionSeed {
+            address: Address(0x0001_4000_1000),
+            kind: FunctionSeedKind::ExceptionTable,
+            name: None,
+        },
+    ]);
     let result = AnalysisResult {
         cfg: ControlFlowGraph {
             functions: BTreeMap::from([(
@@ -53,7 +65,7 @@ fn static_export_preserves_identity_and_canonical_graph() {
         xrefs: vec![Xref {
             id: XrefId(0),
             from: Address(0x0001_4000_1004),
-            to: Address(0x0001_4000_3000),
+            to: Address(0x0001_4000_1000),
             kind: XrefKind::Call,
         }],
         fidelity: Fidelity::Incomplete,
@@ -81,9 +93,34 @@ fn static_export_preserves_identity_and_canonical_graph() {
     assert_eq!(export["functions"][0]["block_ids"][0], 0);
     assert_eq!(
         export["functions"][0]["seed_provenance"],
-        serde_json::json!(["analysis_option_entrypoint", "image_entry", "symbol"])
+        serde_json::json!([
+            "analysis_option_entrypoint",
+            "direct_call_target",
+            "exception_table",
+            "export",
+            "image_entry",
+            "symbol"
+        ])
     );
+    assert!(export["functions"][0].get("confidence").is_none());
     assert_eq!(export["blocks"][0]["start"], 0x0001_4000_1000_u64);
     assert_eq!(export["xrefs"][0]["kind"], "call");
     assert_eq!(export["imports"][0]["name"], "MmMapIoSpace");
+
+    let mut unseeded_image = image.clone();
+    unseeded_image.function_seeds.clear();
+    let unseeded_result = AnalysisResult {
+        xrefs: vec![],
+        ..result
+    };
+    let fallback = static_export_json(
+        &unseeded_image,
+        &unseeded_result,
+        &AnalysisOptions::default(),
+    );
+    assert_eq!(
+        fallback["functions"][0]["seed_provenance"],
+        serde_json::json!(["recursive_discovery"])
+    );
+    assert!(fallback["functions"][0].get("confidence").is_none());
 }
