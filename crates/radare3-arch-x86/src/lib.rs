@@ -1,12 +1,28 @@
 #![forbid(unsafe_code)]
 
 use iced_x86::{
-    Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind, Register,
+    Code, Decoder as IcedDecoderCore, DecoderOptions, FastFormatter, FlowControl, OpKind, Register,
 };
 use radare3_arch::{DecodeError, DecodedInstruction, Decoder, FlowKind};
 use radare3_types::Address;
 
 pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v3-absolute-data-xrefs";
+/// Exact iced-x86 crate version pinned by this workspace's lockfile.
+pub const ICED_X86_DECODER_VERSION: &str = "1.21.0";
+
+/// Decoder output with the native iced-x86 code identity attached.
+///
+/// `code_name` is iced-x86's `Code` enum variant name. It is decoder metadata,
+/// not a canonical ISANITY identity or a claim about instruction semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedInstructionWithCode {
+    pub decoded: DecodedInstruction,
+    pub code: Code,
+    pub code_name: String,
+    pub decoder_version: &'static str,
+    /// No canonical ISANITY identity mapping is defined by this decoder yet.
+    pub canonical_isanity_id: Option<&'static str>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisassembledInstruction {
@@ -31,6 +47,22 @@ impl IcedX86Decoder {
 }
 
 impl IcedX86Decoder {
+    /// Decode once and return the existing instruction record plus iced-x86 metadata.
+    pub fn decode_with_code(
+        &self,
+        address: Address,
+        bytes: &[u8],
+    ) -> Result<DecodedInstructionWithCode, DecodeError> {
+        let (decoded, code) = decode_native(self.bitness, address, bytes)?;
+        Ok(DecodedInstructionWithCode {
+            decoded,
+            code,
+            code_name: format!("{code:?}"),
+            decoder_version: ICED_X86_DECODER_VERSION,
+            canonical_isanity_id: None,
+        })
+    }
+
     pub fn disassemble(
         &self,
         address: Address,
@@ -68,37 +100,44 @@ impl IcedX86Decoder {
 
 impl Decoder for IcedX86Decoder {
     fn decode(&self, address: Address, bytes: &[u8]) -> Result<DecodedInstruction, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::InsufficientBytes);
+        decode_native(self.bitness, address, bytes).map(|(decoded, _)| decoded)
+    }
+}
+
+fn decode_native(
+    bitness: u32,
+    address: Address,
+    bytes: &[u8],
+) -> Result<(DecodedInstruction, Code), DecodeError> {
+    if bytes.is_empty() {
+        return Err(DecodeError::InsufficientBytes);
+    }
+
+    let mut decoder = IcedDecoderCore::with_ip(bitness, bytes, address.0, DecoderOptions::NONE);
+    let instruction = decoder.decode();
+    if instruction.is_invalid() {
+        return Err(DecodeError::InvalidInstruction);
+    }
+
+    let length = u8::try_from(instruction.len()).map_err(|_| DecodeError::InvalidInstruction)?;
+    let flow = map_flow(instruction.flow_control());
+    let target = match instruction.op0_kind() {
+        OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 => {
+            Some(Address(instruction.near_branch_target()))
         }
-
-        let mut decoder =
-            IcedDecoderCore::with_ip(self.bitness, bytes, address.0, DecoderOptions::NONE);
-        let instruction = decoder.decode();
-
-        if instruction.is_invalid() {
-            return Err(DecodeError::InvalidInstruction);
-        }
-
-        let length =
-            u8::try_from(instruction.len()).map_err(|_| DecodeError::InvalidInstruction)?;
-        let flow = map_flow(instruction.flow_control());
-        let target = match instruction.op0_kind() {
-            OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 => {
-                Some(Address(instruction.near_branch_target()))
-            }
-            _ => None,
-        };
-        let data_target = memory_data_target(&instruction);
-
-        Ok(DecodedInstruction {
+        _ => None,
+    };
+    let data_target = memory_data_target(&instruction);
+    Ok((
+        DecodedInstruction {
             address,
             length,
             flow,
             target,
             data_target,
-        })
-    }
+        },
+        instruction.code(),
+    ))
 }
 
 fn memory_data_target(instruction: &iced_x86::Instruction) -> Option<Address> {
@@ -146,6 +185,34 @@ mod tests {
         assert_eq!(decoded.target, None);
         assert_eq!(decoded.data_target, None);
 
+        Ok(())
+    }
+
+    #[test]
+    fn exposes_native_mov_code_and_version() -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = IcedX86Decoder::x86_64()
+            .decode_with_code(Address(0x401000), &[0x48, 0x89, 0xe5])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(decoded.code_name, "Mov_rm64_r64");
+        assert_eq!(decoded.code_name, format!("{:?}", decoded.code));
+        assert_eq!(decoded.decoder_version, "1.21.0");
+        assert_eq!(decoded.canonical_isanity_id, None);
+        assert_eq!(decoded.decoded.length, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn exposes_native_conditional_branch_code_without_canonical_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = IcedX86Decoder::x86_64()
+            .decode_with_code(Address(0x401000), &[0x75, 0x00])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(decoded.code_name, "Jne_rel8_64");
+        assert_eq!(decoded.code_name, format!("{:?}", decoded.code));
+        assert_eq!(decoded.decoded.flow, FlowKind::ConditionalBranch);
+        assert_eq!(decoded.canonical_isanity_id, None);
         Ok(())
     }
 
