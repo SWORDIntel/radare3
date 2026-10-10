@@ -9,6 +9,34 @@ use radare3_types::Address;
 pub const DECODER_SEMANTICS_VERSION: &str = "iced-x86-1.21.0/radare3-x86-v3-absolute-data-xrefs";
 /// Exact iced-x86 crate version pinned by this workspace's lockfile.
 pub const ICED_X86_DECODER_VERSION: &str = "1.21.0";
+pub const ICED_X86_HANDOFF_SCHEMA: &str = "radare3.iced-x86.decode-handoff.v1";
+
+/// Canonical-identity state for a provider decode result.
+///
+/// ISANITY's checked-in form identities are fixtures/proposals, not a ratified
+/// real-instruction catalogue. Keep this explicitly unresolved until a reviewed
+/// mapping artifact exists; provider enum values must never be promoted by name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalMapping {
+    Unresolved { reason: &'static str },
+}
+
+/// Library-level handoff envelope retaining iced-x86 identity without claiming
+/// that its version-scoped `Code` value is a cross-decoder identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IcedX86HandoffV1 {
+    pub schema: &'static str,
+    pub provider: &'static str,
+    pub provider_version: &'static str,
+    pub architecture: &'static str,
+    pub execution_mode: String,
+    pub input_bytes: Vec<u8>,
+    pub consumed_bytes: Vec<u8>,
+    pub source_namespace: &'static str,
+    pub source_name: String,
+    pub source_numeric_value: u32,
+    pub canonical_mapping: CanonicalMapping,
+}
 
 /// Decoder output with the native iced-x86 code identity attached.
 ///
@@ -106,6 +134,31 @@ impl IcedX86Decoder {
             decoder_version: result.decoder_version,
             decoded: result.decoded,
             canonical_isanity_id: result.canonical_isanity_id,
+        })
+    }
+
+    /// Create the versioned identity handoff from the same decode operation.
+    /// No ID is invented when ISANITY has not ratified an applicable form row.
+    pub fn observe_handoff_v1(
+        &self,
+        address: Address,
+        bytes: &[u8],
+    ) -> Result<IcedX86HandoffV1, DecodeError> {
+        let observation = self.observe(address, bytes)?;
+        Ok(IcedX86HandoffV1 {
+            schema: ICED_X86_HANDOFF_SCHEMA,
+            provider: "iced-x86",
+            provider_version: observation.decoder_version,
+            architecture: "x86",
+            execution_mode: format!("{}-bit", observation.bitness),
+            input_bytes: observation.input_bytes,
+            consumed_bytes: observation.decoded_bytes,
+            source_namespace: "iced-x86::Code",
+            source_name: observation.code_name,
+            source_numeric_value: observation.code_discriminant,
+            canonical_mapping: CanonicalMapping::Unresolved {
+                reason: "no ratified ISANITY catalogue mapping is available",
+            },
         })
     }
 
@@ -265,6 +318,53 @@ mod tests {
         assert_eq!(observation.decoder_version, ICED_X86_DECODER_VERSION);
         assert_eq!(observation.canonical_isanity_id, None);
         Ok(())
+    }
+
+    #[test]
+    fn handoff_v1_preserves_provider_namespace_mode_version_and_consumption()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let handoff = IcedX86Decoder::x86_64()
+            .observe_handoff_v1(Address(0x401000), &[0x48, 0x89, 0xe5, 0x90])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+
+        assert_eq!(handoff.schema, ICED_X86_HANDOFF_SCHEMA);
+        assert_eq!(handoff.provider, "iced-x86");
+        assert_eq!(handoff.provider_version, "1.21.0");
+        assert_eq!(handoff.architecture, "x86");
+        assert_eq!(handoff.execution_mode, "64-bit");
+        assert_eq!(handoff.input_bytes, [0x48, 0x89, 0xe5, 0x90]);
+        assert_eq!(handoff.consumed_bytes, [0x48, 0x89, 0xe5]);
+        assert_eq!(handoff.source_namespace, "iced-x86::Code");
+        assert_eq!(handoff.source_name, "Mov_rm64_r64");
+        assert_eq!(handoff.source_numeric_value, Code::Mov_rm64_r64 as u32);
+        assert_eq!(
+            handoff.canonical_mapping,
+            CanonicalMapping::Unresolved {
+                reason: "no ratified ISANITY catalogue mapping is available"
+            }
+        );
+
+        let legacy_handoff = IcedX86Decoder::x86()
+            .observe_handoff_v1(Address(0x401000), &[0x89, 0xe5, 0x90])
+            .map_err(|error| format!("decode failed: {error:?}"))?;
+        assert_eq!(legacy_handoff.execution_mode, "32-bit");
+        assert_eq!(legacy_handoff.provider_version, handoff.provider_version);
+        assert_eq!(legacy_handoff.source_namespace, handoff.source_namespace);
+        assert_eq!(legacy_handoff.source_name, "Mov_rm32_r32");
+        assert_eq!(legacy_handoff.consumed_bytes, [0x89, 0xe5]);
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_v1_fails_closed_for_invalid_or_truncated_input() {
+        assert_eq!(
+            IcedX86Decoder::x86_64().observe_handoff_v1(Address(0), &[]),
+            Err(DecodeError::InsufficientBytes)
+        );
+        assert_eq!(
+            IcedX86Decoder::x86_64().observe_handoff_v1(Address(0), &[0x0f]),
+            Err(DecodeError::InvalidInstruction)
+        );
     }
 
     #[test]
