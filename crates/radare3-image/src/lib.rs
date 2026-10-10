@@ -96,6 +96,15 @@ pub struct Import {
     pub kind: ImportKind,
 }
 
+/// A source-evidenced x86-64 ELF PLT-style thunk resolving to a loader import.
+/// The original xref target remains the thunk entry; this is annotation only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedImportThunk<'a> {
+    pub entry: Address,
+    pub slot: Address,
+    pub import: &'a Import,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ImportIndex {
     by_slot: Vec<(Address, usize)>,
@@ -313,6 +322,37 @@ impl BinaryImage {
 
         self.bytes().get(offset..end)
     }
+
+    /// Resolve only the exact six-byte x86-64 ELF `jmp qword ptr [rip+disp32]`
+    /// thunk shape when its computed slot names a function import.
+    pub fn import_thunk_at(&self, entry: Address) -> Option<ResolvedImportThunk<'_>> {
+        if self.format != BinaryFormat::Elf || self.architecture != Architecture::X86_64 {
+            return None;
+        }
+
+        if !self
+            .segments
+            .iter()
+            .any(|segment| segment.permissions.execute && segment.contains_file_address(entry))
+        {
+            return None;
+        }
+        let bytes = self.bytes_at(entry, 6)?;
+        if bytes.len() != 6 || bytes[..2] != [0xff, 0x25] {
+            return None;
+        }
+
+        let displacement = i32::from_le_bytes(bytes[2..6].try_into().ok()?);
+        let next_instruction = entry.0.checked_add(6)?;
+        let slot_value = i128::from(next_instruction) + i128::from(displacement);
+        let slot = Address(u64::try_from(slot_value).ok()?);
+        let import = self.import_at_slot(slot)?;
+        (import.kind == ImportKind::Function).then_some(ResolvedImportThunk {
+            entry,
+            slot,
+            import,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +390,56 @@ mod tests {
             Some(2)
         );
         assert!(!image.is_mapped());
+    }
+
+    #[test]
+    fn resolves_exact_elf_rip_relative_import_thunk_and_rejects_near_miss() {
+        let thunk = [0xff, 0x25, 0xfa, 0x0f, 0x00, 0x00]; // 0x1000 + 6 + 0xffa = 0x2000
+        let bytes = thunk.to_vec();
+        let image = BinaryImage::new(
+            Arc::from(bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 6,
+                memory_size: 6,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        let resolved = image.import_thunk_at(Address(0x1000)).expect("exact thunk");
+        assert_eq!(resolved.entry, Address(0x1000));
+        assert_eq!(resolved.slot, Address(0x2000));
+        assert_eq!(resolved.import.name, "puts");
+
+        let mut near_miss_bytes = image.bytes().to_vec();
+        near_miss_bytes[1] = 0x24; // SIB form, not RIP-relative ModRM rm=101.
+        let near_miss = BinaryImage::new(
+            Arc::from(near_miss_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            image.segments.clone(),
+        )
+        .with_imports(image.imports.clone());
+        assert!(near_miss.import_thunk_at(Address(0x1000)).is_none());
     }
 
     #[test]

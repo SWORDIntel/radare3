@@ -1263,6 +1263,24 @@ fn import_reference_json_indexed(
     }
 }
 
+fn normalized_import_thunk_json(
+    image: &radare3::image::BinaryImage,
+    entry: Address,
+) -> serde_json::Value {
+    match image.import_thunk_at(entry) {
+        Some(thunk) => serde_json::json!({
+            "entry": thunk.entry.0,
+            "slot": thunk.slot.0,
+            "import": {
+                "library": thunk.import.library,
+                "name": thunk.import.name,
+                "kind": import_kind_name(thunk.import.kind),
+            },
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
 fn format_import_reference_indexed(
     image: &radare3::image::BinaryImage,
     index: &radare3::image::ImportIndex,
@@ -1780,6 +1798,7 @@ fn render_session_xrefs(
                         "to": xref.to.0,
                         "kind": xref_kind_name(xref.kind),
                         "import": import_reference_json_indexed(image, import_index, xref.to),
+                        "normalized_import_thunk": normalized_import_thunk_json(image, xref.to),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1793,6 +1812,7 @@ fn render_session_xrefs(
                         "to": xref.to.0,
                         "kind": xref_kind_name(xref.kind),
                         "import": import_reference_json_indexed(image, import_index, xref.to),
+                        "normalized_import_thunk": normalized_import_thunk_json(image, xref.to),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -2370,6 +2390,52 @@ fn parse_address(value: &str) -> Result<Address, String> {
 
 #[cfg(test)]
 mod static_export_tests;
+
+#[cfg(test)]
+mod import_thunk_tests {
+    use super::normalized_import_thunk_json;
+    use radare3::image::{BinaryImage, Import, ImportKind, Permissions, Segment};
+    use radare3::types::{Address, Architecture, BinaryFormat};
+    use std::sync::Arc;
+
+    #[test]
+    fn xref_thunk_annotation_names_import_without_replacing_entry() {
+        let mut bytes = vec![0x90; 6];
+        bytes.copy_from_slice(&[0xff, 0x25, 0xfa, 0x0f, 0x00, 0x00]);
+        let image = BinaryImage::new(
+            Arc::from(bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 6,
+                memory_size: 6,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        let annotation = normalized_import_thunk_json(&image, Address(0x1000));
+        assert_eq!(annotation["entry"], 0x1000);
+        assert_eq!(annotation["slot"], 0x2000);
+        assert_eq!(annotation["import"]["library"], "libc.so.6");
+        assert_eq!(annotation["import"]["name"], "puts");
+    }
+}
 
 #[cfg(test)]
 mod decode_evidence_tests {
