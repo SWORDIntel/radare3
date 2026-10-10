@@ -71,3 +71,12 @@ session-import-index=miss
 Later xref queries reuse it and emit `session-import-index=hit`.
 
 The index is not built for `afi` or other commands that do not render import annotations. One-shot xref commands retain the simple linear lookup path as a reference implementation.
+
+
+## PLT/import thunk normalization
+
+radare3 normalizes recognized import thunks to their underlying function imports:
+- Exact x86-64 ELF `FF 25` RIP-relative indirect jumps to function import GOT slots (`jmp qword ptr [rip+disp32]`).
+- One-hop x86-64 ELF `E9` rel32 executable veneers targeting an already-recognized exact `FF 25` import thunk.
+
+Normalization preserves the original xref target address (`entry`) while exposing the final import slot, function import metadata, and any intermediate `veneer_destination` as evidence. Cycles, invalid address arithmetic, non-executable targets/veneers, unsupported platforms, and arbitrary branches are rejected.

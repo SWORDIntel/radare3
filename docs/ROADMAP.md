@@ -105,7 +105,7 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] RIP-relative and explicit absolute data references
 - [x] indirect call relationship preserved through import slots
 - [ ] relocation-assisted non-import data references
-- [ ] PLT/import thunk normalization
+- [x] PLT/import thunk normalization
 - [ ] jump-table and switch recovery
 - [ ] indirect branch/call target recovery
 - [ ] tail-call / thunk / noreturn normalization

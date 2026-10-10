@@ -139,3 +139,5 @@ Future schema changes require a new schema suffix instead of silently mutating a
 ### Xref import annotation
 
 `radare3.axt.v2` and `radare3.axf.v2` add an `import` field to each xref. It is either `null` or a normalized import object when the xref target matches a known import slot.
+
+Recognized import thunks and one-hop `jmp rel32` executable veneers also carry a `normalized_import_thunk` field exposing the original xref target `entry`, final `slot`, resolved `import`, and optional `veneer_destination` evidence.

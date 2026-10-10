@@ -103,6 +103,17 @@ pub struct ResolvedImportThunk<'a> {
     pub entry: Address,
     pub slot: Address,
     pub import: &'a Import,
+    pub veneer_destination: Option<Address>,
+}
+
+impl<'a> ResolvedImportThunk<'a> {
+    pub fn veneer_destination(&self) -> Option<Address> {
+        self.veneer_destination
+    }
+
+    pub fn veneer_target(&self) -> Option<Address> {
+        self.veneer_destination
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -325,7 +336,7 @@ impl BinaryImage {
 
     /// Resolve only the exact six-byte x86-64 ELF `jmp qword ptr [rip+disp32]`
     /// thunk shape when its computed slot names a function import.
-    pub fn import_thunk_at(&self, entry: Address) -> Option<ResolvedImportThunk<'_>> {
+    fn direct_ff25_import_thunk_at(&self, entry: Address) -> Option<ResolvedImportThunk<'_>> {
         if self.format != BinaryFormat::Elf || self.architecture != Architecture::X86_64 {
             return None;
         }
@@ -351,6 +362,57 @@ impl BinaryImage {
             entry,
             slot,
             import,
+            veneer_destination: None,
+        })
+    }
+
+    /// Resolve an exact x86-64 ELF import thunk or a one-hop `jmp rel32`
+    /// executable veneer targeting one.
+    ///
+    /// Recognizes:
+    /// - Direct six-byte `jmp qword ptr [rip+disp32]` (`FF 25 disp32`) when
+    ///   its computed slot names a function import.
+    /// - One-hop five-byte `jmp rel32` (`E9 rel32`) executable veneer when
+    ///   its target is an already-recognized exact FF 25 import thunk.
+    ///
+    /// The entry address (the original xref target) is preserved, and any
+    /// intermediate veneer destination is exposed alongside the final import slot.
+    pub fn import_thunk_at(&self, entry: Address) -> Option<ResolvedImportThunk<'_>> {
+        if let Some(direct) = self.direct_ff25_import_thunk_at(entry) {
+            return Some(direct);
+        }
+
+        if self.format != BinaryFormat::Elf || self.architecture != Architecture::X86_64 {
+            return None;
+        }
+
+        if !self
+            .segments
+            .iter()
+            .any(|segment| segment.permissions.execute && segment.contains_file_address(entry))
+        {
+            return None;
+        }
+
+        let bytes = self.bytes_at(entry, 5)?;
+        if bytes.len() != 5 || bytes[0] != 0xe9 {
+            return None;
+        }
+
+        let displacement = i32::from_le_bytes(bytes[1..5].try_into().ok()?);
+        let next_instruction = entry.0.checked_add(5)?;
+        let target_value = i128::from(next_instruction) + i128::from(displacement);
+        let target = Address(u64::try_from(target_value).ok()?);
+        if target == entry {
+            return None;
+        }
+
+        let direct = self.direct_ff25_import_thunk_at(target)?;
+        Some(ResolvedImportThunk {
+            entry,
+            slot: direct.slot,
+            import: direct.import,
+            veneer_destination: Some(target),
         })
     }
 }
@@ -548,6 +610,373 @@ mod tests {
         }]);
 
         assert!(image.import_thunk_at(Address(0)).is_none());
+    }
+
+    #[test]
+    fn resolves_one_hop_rel32_veneer_targeting_exact_thunk() {
+        // Veneer at 0x1000: E9 disp32 -> target 0x1020
+        // next_instruction = 0x1005, disp32 = 0x1020 - 0x1005 = 0x1b
+        // Exact thunk at 0x1020: FF 25 disp32 -> slot 0x2000
+        // next_instruction = 0x1026, disp32 = 0x2000 - 0x1026 = 0x0fda
+        let mut text_bytes = vec![0x90; 0x30];
+        text_bytes[0..5].copy_from_slice(&[0xe9, 0x1b, 0x00, 0x00, 0x00]);
+        text_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+
+        let image = BinaryImage::new(
+            Arc::from(text_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        // Resolving the veneer at 0x1000:
+        // Preserves original entry 0x1000, exposes final slot 0x2000, import puts, and veneer destination 0x1020.
+        let Some(resolved_veneer) = image.import_thunk_at(Address(0x1000)) else {
+            panic!("veneer resolved");
+        };
+        assert_eq!(resolved_veneer.entry, Address(0x1000));
+        assert_eq!(resolved_veneer.slot, Address(0x2000));
+        assert_eq!(resolved_veneer.import.name, "puts");
+        assert_eq!(resolved_veneer.veneer_destination, Some(Address(0x1020)));
+        assert_eq!(resolved_veneer.veneer_destination(), Some(Address(0x1020)));
+        assert_eq!(resolved_veneer.veneer_target(), Some(Address(0x1020)));
+
+        // Resolving the direct thunk at 0x1020 directly:
+        // Preserves existing FF 25 behavior with veneer_destination = None.
+        let Some(resolved_direct) = image.import_thunk_at(Address(0x1020)) else {
+            panic!("direct thunk resolved");
+        };
+        assert_eq!(resolved_direct.entry, Address(0x1020));
+        assert_eq!(resolved_direct.slot, Address(0x2000));
+        assert_eq!(resolved_direct.import.name, "puts");
+        assert_eq!(resolved_direct.veneer_destination, None);
+
+        // Backward one-hop E9 veneer:
+        // Veneer at 0x1026: E9 disp32 -> target 0x1020
+        // next_instruction = 0x102b, disp32 = 0x1020 - 0x102b = -11 = -0xb
+        // in 32-bit two's complement: 0xfffffff5
+        let mut backward_bytes = vec![0x90; 0x30];
+        backward_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+        backward_bytes[0x26..0x2b].copy_from_slice(&[0xe9, 0xf5, 0xff, 0xff, 0xff]);
+        let backward_image = BinaryImage::new(
+            Arc::from(backward_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(image.imports.clone());
+
+        let Some(resolved_backward) = backward_image.import_thunk_at(Address(0x1026)) else {
+            panic!("backward veneer resolved");
+        };
+        assert_eq!(resolved_backward.entry, Address(0x1026));
+        assert_eq!(resolved_backward.slot, Address(0x2000));
+        assert_eq!(resolved_backward.veneer_destination, Some(Address(0x1020)));
+    }
+
+    #[test]
+    fn rejects_veneer_cycles_and_multihop_chains() {
+        // Self-cycle: E9 with disp32 = -5 jumps to itself (entry = 0x1000, next = 0x1005, target = 0x1000)
+        let mut self_cycle_bytes = vec![0x90; 0x10];
+        self_cycle_bytes[0..5].copy_from_slice(&[0xe9, 0xfb, 0xff, 0xff, 0xff]);
+        let self_cycle_image = BinaryImage::new(
+            Arc::from(self_cycle_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x10,
+                memory_size: 0x10,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        );
+        assert!(self_cycle_image.import_thunk_at(Address(0x1000)).is_none());
+
+        // Multi-hop chain: 0x1000 (E9 -> 0x1010) -> 0x1010 (E9 -> 0x1020) -> 0x1020 (FF 25 -> 0x2000)
+        // 0x1000 -> next 0x1005, disp = 0x1010 - 0x1005 = 0xb -> [0xe9, 0x0b, 0x00, 0x00, 0x00]
+        // 0x1010 -> next 0x1015, disp = 0x1020 - 0x1015 = 0xb -> [0xe9, 0x0b, 0x00, 0x00, 0x00]
+        // 0x1020 -> FF 25 -> 0x2000
+        let mut multihop_bytes = vec![0x90; 0x30];
+        multihop_bytes[0..5].copy_from_slice(&[0xe9, 0x0b, 0x00, 0x00, 0x00]);
+        multihop_bytes[0x10..0x15].copy_from_slice(&[0xe9, 0x0b, 0x00, 0x00, 0x00]);
+        multihop_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+
+        let multihop_image = BinaryImage::new(
+            Arc::from(multihop_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        // Multi-hop veneer at 0x1000 must be rejected (only one-hop is recognized):
+        assert!(multihop_image.import_thunk_at(Address(0x1000)).is_none());
+        // The one-hop veneer at 0x1010 directly targeting FF 25 is recognized:
+        assert!(multihop_image.import_thunk_at(Address(0x1010)).is_some());
+    }
+
+    #[test]
+    fn rejects_veneer_with_invalid_arithmetic_non_executable_targets_and_arbitrary_branches() {
+        // Invalid arithmetic: rel32 target underflow
+        // At 0x0002: E9 with disp32 = -10 (target < 0)
+        let mut underflow_bytes = vec![0x90; 10];
+        underflow_bytes[2..7].copy_from_slice(&[0xe9, 0xf6, 0xff, 0xff, 0xff]); // disp = -10, next = 7 -> target = -3
+        let underflow_image = BinaryImage::new(
+            Arc::from(underflow_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0),
+                file_offset: 0,
+                file_size: 10,
+                memory_size: 10,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        );
+        assert!(underflow_image.import_thunk_at(Address(2)).is_none());
+
+        // Non-executable target:
+        // Veneer at 0x1000 (executable) jumps to 0x2000 (data segment, execute: false).
+        // At 0x2000 is an FF 25 instruction pointing to slot 0x3000.
+        let mut file_bytes = vec![0x90; 0x1000 + 0x10];
+        // 0x1000: E9 jumping to 0x2000: next = 0x1005, disp = 0x2000 - 0x1005 = 0xffb
+        file_bytes[0..5].copy_from_slice(&[0xe9, 0xfb, 0x0f, 0x00, 0x00]);
+        // 0x2000 (file offset 0x1000): FF 25 jumping to 0x3000: next = 0x2006, disp = 0x3000 - 0x2006 = 0xffa
+        file_bytes[0x1000..0x1006].copy_from_slice(&[0xff, 0x25, 0xfa, 0x0f, 0x00, 0x00]);
+
+        let non_exec_target_image = BinaryImage::new(
+            Arc::from(file_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![
+                Segment {
+                    name: "text".to_string(),
+                    address: Address(0x1000),
+                    file_offset: 0,
+                    file_size: 0x10,
+                    memory_size: 0x10,
+                    permissions: Permissions {
+                        read: true,
+                        write: false,
+                        execute: true,
+                    },
+                },
+                Segment {
+                    name: "data".to_string(),
+                    address: Address(0x2000),
+                    file_offset: 0x1000,
+                    file_size: 0x10,
+                    memory_size: 0x10,
+                    permissions: Permissions {
+                        read: true,
+                        write: false,
+                        execute: false,
+                    },
+                },
+            ],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x3000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+        assert!(
+            non_exec_target_image
+                .import_thunk_at(Address(0x1000))
+                .is_none()
+        );
+
+        // Arbitrary branch: E9 jumping to normal code (e.g. 0x90, 0xc3)
+        let mut arb_bytes = vec![0x90; 0x30];
+        arb_bytes[0..5].copy_from_slice(&[0xe9, 0x1b, 0x00, 0x00, 0x00]); // jumps to 0x1020
+        arb_bytes[0x20] = 0xc3; // RET
+        let arb_image = BinaryImage::new(
+            Arc::from(arb_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        );
+        assert!(arb_image.import_thunk_at(Address(0x1000)).is_none());
+
+        // Target FF 25 resolves to an Object (data) import, not a Function
+        let mut data_bytes = vec![0x90; 0x30];
+        data_bytes[0..5].copy_from_slice(&[0xe9, 0x1b, 0x00, 0x00, 0x00]);
+        data_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+        let data_import_image = BinaryImage::new(
+            Arc::from(data_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "stderr".to_string(),
+            ordinal: None,
+            kind: ImportKind::Object,
+        }]);
+        assert!(data_import_image.import_thunk_at(Address(0x1000)).is_none());
+
+        // Unsupported platform: PE x86_64
+        let mut pe_bytes = vec![0x90; 0x30];
+        pe_bytes[0..5].copy_from_slice(&[0xe9, 0x1b, 0x00, 0x00, 0x00]);
+        pe_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+        let pe_image = BinaryImage::new(
+            Arc::from(pe_bytes),
+            BinaryFormat::Pe,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("msvcrt.dll".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+        assert!(pe_image.import_thunk_at(Address(0x1000)).is_none());
+
+        // Near-miss opcode EB (rel8 jump) instead of E9
+        let mut eb_bytes = vec![0x90; 0x30];
+        eb_bytes[0..2].copy_from_slice(&[0xeb, 0x1e]);
+        eb_bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+        let eb_image = BinaryImage::new(
+            Arc::from(eb_bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x30,
+                memory_size: 0x30,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+        assert!(eb_image.import_thunk_at(Address(0x1000)).is_none());
     }
 
     #[test]

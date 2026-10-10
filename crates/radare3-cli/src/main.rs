@@ -1268,15 +1268,21 @@ fn normalized_import_thunk_json(
     entry: Address,
 ) -> serde_json::Value {
     match image.import_thunk_at(entry) {
-        Some(thunk) => serde_json::json!({
-            "entry": thunk.entry.0,
-            "slot": thunk.slot.0,
-            "import": {
-                "library": thunk.import.library,
-                "name": thunk.import.name,
-                "kind": import_kind_name(thunk.import.kind),
-            },
-        }),
+        Some(thunk) => {
+            let mut value = serde_json::json!({
+                "entry": thunk.entry.0,
+                "slot": thunk.slot.0,
+                "import": {
+                    "library": thunk.import.library,
+                    "name": thunk.import.name,
+                    "kind": import_kind_name(thunk.import.kind),
+                },
+            });
+            if let Some(destination) = thunk.veneer_destination {
+                value["veneer_destination"] = serde_json::json!(destination.0);
+            }
+            value
+        }
         None => serde_json::Value::Null,
     }
 }
@@ -2445,6 +2451,90 @@ mod import_thunk_tests {
 
         // Normalization is annotation-only and remains absent for unsupported
         // formats; callers retain the original xref address independently.
+        let pe_image = BinaryImage::new(
+            Arc::from(image.bytes().to_vec()),
+            BinaryFormat::Pe,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            image.segments.clone(),
+        )
+        .with_imports(image.imports.clone());
+        assert_eq!(
+            normalized_import_thunk_json(&pe_image, Address(0x1000)),
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn xref_veneer_annotation_preserves_entry_and_exposes_destination() {
+        let mut bytes = vec![0x90; 0x40];
+        // 0x1000: E9 disp32 -> target 0x1020 (next = 0x1005, disp = 0x1b)
+        bytes[0..5].copy_from_slice(&[0xe9, 0x1b, 0x00, 0x00, 0x00]);
+        // 0x1020: FF 25 disp32 -> slot 0x2000 (next = 0x1026, disp = 0x0fda)
+        bytes[0x20..0x26].copy_from_slice(&[0xff, 0x25, 0xda, 0x0f, 0x00, 0x00]);
+
+        let image = BinaryImage::new(
+            Arc::from(bytes),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 0x40,
+                memory_size: 0x40,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        // Original xref target address (0x1000) is preserved as entry, while
+        // final import slot (0x2000), import metadata, and veneer destination (0x1020)
+        // are exposed as evidence.
+        let annotation = normalized_import_thunk_json(&image, Address(0x1000));
+        assert_eq!(
+            annotation,
+            serde_json::json!({
+                "entry": 0x1000,
+                "slot": 0x2000,
+                "import": {
+                    "library": "libc.so.6",
+                    "name": "puts",
+                    "kind": "function",
+                },
+                "veneer_destination": 0x1020,
+            })
+        );
+
+        // Direct thunk retains original behavior without veneer_destination field.
+        let direct_annotation = normalized_import_thunk_json(&image, Address(0x1020));
+        assert_eq!(
+            direct_annotation,
+            serde_json::json!({
+                "entry": 0x1020,
+                "slot": 0x2000,
+                "import": {
+                    "library": "libc.so.6",
+                    "name": "puts",
+                    "kind": "function",
+                },
+            })
+        );
+
+        // Arbitrary E9 branch or unsupported format returns null.
         let pe_image = BinaryImage::new(
             Arc::from(image.bytes().to_vec()),
             BinaryFormat::Pe,
