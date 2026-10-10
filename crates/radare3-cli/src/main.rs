@@ -2341,6 +2341,81 @@ mod static_export_tests;
 #[cfg(test)]
 mod decode_evidence_tests {
     use super::decode_evidence_json;
+    use serde_json::Value;
+
+    fn assert_isanity_decode_observation_v1(observation: &Value) {
+        assert_eq!(
+            observation.as_object().map(serde_json::Map::len),
+            Some(8),
+            "v1 observation must not add fields forbidden by the shared schema"
+        );
+        assert_eq!(observation["schema_version"], 1);
+        assert_eq!(observation["record_kind"], "decode-observation");
+
+        let provider = observation["provider"]
+            .as_object()
+            .expect("provider must be an object");
+        assert_eq!(provider.len(), 2);
+        assert!(
+            provider["name"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(
+            provider["version"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        assert!(
+            observation["architecture"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(
+            observation["execution_mode"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        let input_bytes_hex = observation["input_bytes_hex"]
+            .as_str()
+            .expect("input_bytes_hex must be a string");
+        assert!(!input_bytes_hex.is_empty());
+        assert_eq!(input_bytes_hex.len() % 2, 0);
+        assert!(
+            input_bytes_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+
+        let result = observation["result"]
+            .as_object()
+            .expect("result must be an object");
+        assert_eq!(result["status"], "decoded");
+        let consumed_bytes = result["consumed_bytes"]
+            .as_u64()
+            .expect("consumed_bytes must be an unsigned integer");
+        assert!((1..=u16::MAX as u64).contains(&consumed_bytes));
+
+        let source_identifier = result["source_identifier"]
+            .as_object()
+            .expect("decoded source_identifier must be an object");
+        assert_eq!(source_identifier.len(), 3);
+        assert!(
+            source_identifier["namespace"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(
+            source_identifier["name"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(source_identifier["numeric_value"].as_u64().is_some());
+
+        // This adapter has no separately reviewed canonical mapping.
+        assert!(observation["canonical_form_id"].is_null());
+    }
 
     #[test]
     fn emits_mode_and_version_scoped_instruction_evidence() -> Result<(), String> {
@@ -2356,6 +2431,7 @@ mod decode_evidence_tests {
         assert_eq!(json["code_name"], "Mov_rm64_r64");
         assert!(json["code_discriminant"].is_u64());
         assert!(json["canonical_isanity_id"].is_null());
+        assert_isanity_decode_observation_v1(&json["isanity_observation"]);
         assert_eq!(
             json["isanity_observation"],
             serde_json::json!({
@@ -2384,5 +2460,13 @@ mod decode_evidence_tests {
     fn rejects_invalid_mode_and_empty_bytes() {
         assert!(decode_evidence_json("16", "0x0", "90").is_err());
         assert!(decode_evidence_json("64", "0x0", "").is_err());
+    }
+
+    #[test]
+    fn preserves_cli_error_behavior_for_invalid_input() {
+        assert_eq!(
+            decode_evidence_json("64", "0x0", "zz").err().as_deref(),
+            Some("invalid hex byte zz: invalid digit found in string")
+        );
     }
 }
