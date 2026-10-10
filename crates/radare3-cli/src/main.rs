@@ -2041,19 +2041,38 @@ fn static_export_json(
     result: &AnalysisResult,
     options: &AnalysisOptions,
 ) -> serde_json::Value {
-    let functions = result
-        .cfg
-        .functions
-        .values()
-        .map(|function| {
-            serde_json::json!({
-                "id": function.id.0,
-                "entry": function.entry.0,
-                "name": function.name,
-                "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+    let functions =
+        result
+            .cfg
+            .functions
+            .values()
+            .map(|function| {
+                let mut provenance = image
+                    .function_seeds
+                    .iter()
+                    .filter(|seed| seed.address == function.entry)
+                    .map(|seed| seed_kind_name(seed.kind))
+                    .collect::<std::collections::BTreeSet<_>>();
+                if options.entrypoints.contains(&function.entry) {
+                    provenance.insert("analysis_option_entrypoint");
+                }
+                if result.xrefs.iter().any(|xref| {
+                    xref.to == function.entry && xref.kind == radare3::xref::XrefKind::Call
+                }) {
+                    provenance.insert("direct_call_target");
+                }
+                if provenance.is_empty() {
+                    provenance.insert("recursive_discovery");
+                }
+                serde_json::json!({
+                    "id": function.id.0,
+                    "entry": function.entry.0,
+                    "name": function.name,
+                    "block_ids": function.blocks.iter().map(|id| id.0).collect::<Vec<_>>(),
+                    "seed_provenance": provenance,
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
     let blocks = result
         .cfg
         .blocks
@@ -2117,6 +2136,15 @@ fn static_export_json(
         "xrefs": xrefs,
         "imports": imports,
     })
+}
+
+fn seed_kind_name(kind: radare3::image::FunctionSeedKind) -> &'static str {
+    match kind {
+        radare3::image::FunctionSeedKind::Entry => "image_entry",
+        radare3::image::FunctionSeedKind::Symbol => "symbol",
+        radare3::image::FunctionSeedKind::Export => "export",
+        radare3::image::FunctionSeedKind::ExceptionTable => "exception_table",
+    }
 }
 
 fn route_command(path: &str, command: &str) -> Result<(), String> {

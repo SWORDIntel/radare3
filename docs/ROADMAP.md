@@ -107,6 +107,7 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] indirect call relationship preserved through import slots
 - [ ] relocation-assisted non-import data references
 - [x] PLT/import thunk normalization
+- [x] static-export function seed provenance
 - [ ] jump-table and switch recovery
 - [ ] indirect branch/call target recovery
 - [ ] tail-call / thunk / noreturn normalization

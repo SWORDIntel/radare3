@@ -72,6 +72,7 @@ different value here means the outputs are not comparable across runs.
 | `entry` | integer | Function entry VA. The stable key for cross-run joins: `(binary_sha256, entry)`. |
 | `name` | string \| null | Preferred loader seed name when known, otherwise a synthesized `sub_<hex>` label; the field is nullable in the wire shape. |
 | `block_ids` | integer[] | `blocks[].id` values reachable from `entry`. Resolves only within this document. |
+| `seed_provenance` | string[] | Deterministically sorted evidence for why this function entry was analyzed. Values include `image_entry`, `symbol`, `export`, `exception_table`, `analysis_option_entrypoint`, and `direct_call_target`; `recursive_discovery` is used when no entry evidence is available. This records discovery provenance, not confidence or semantic certainty. |
 
 ### `blocks[]`
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::*;
 use radare3::cfg::{BasicBlock, ControlFlowGraph, Function};
-use radare3::image::{Import, ImportKind};
+use radare3::image::{FunctionSeed, FunctionSeedKind, Import, ImportKind};
 use radare3::types::{BinaryFormat, BlockId, Fidelity, FunctionId, XrefId};
 use radare3::xref::{Xref, XrefKind};
 
@@ -23,6 +23,11 @@ fn static_export_preserves_identity_and_canonical_graph() {
         name: "MmMapIoSpace".to_string(),
         ordinal: None,
         kind: ImportKind::Function,
+    });
+    image.function_seeds.push(FunctionSeed {
+        address: Address(0x0001_4000_1000),
+        kind: FunctionSeedKind::Symbol,
+        name: Some("dispatch".to_string()),
     });
     let result = AnalysisResult {
         cfg: ControlFlowGraph {
@@ -55,6 +60,7 @@ fn static_export_preserves_identity_and_canonical_graph() {
     };
 
     let options = AnalysisOptions {
+        entrypoints: vec![Address(0x0001_4000_1000)],
         max_instructions: Some(100),
         ..AnalysisOptions::default()
     };
@@ -73,6 +79,10 @@ fn static_export_preserves_identity_and_canonical_graph() {
         DECODER_SEMANTICS_VERSION
     );
     assert_eq!(export["functions"][0]["block_ids"][0], 0);
+    assert_eq!(
+        export["functions"][0]["seed_provenance"],
+        serde_json::json!(["analysis_option_entrypoint", "image_entry", "symbol"])
+    );
     assert_eq!(export["blocks"][0]["start"], 0x0001_4000_1000_u64);
     assert_eq!(export["xrefs"][0]["kind"], "call");
     assert_eq!(export["imports"][0]["name"], "MmMapIoSpace");
