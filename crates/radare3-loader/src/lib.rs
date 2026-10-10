@@ -471,6 +471,21 @@ mod tests {
         Arc::from(bytes)
     }
 
+    fn minimal_elf32_x86() -> Arc<[u8]> {
+        let mut bytes = vec![0_u8; 52];
+
+        bytes[0..4].copy_from_slice(b"\x7fELF");
+        bytes[4] = 1;
+        bytes[5] = 1;
+        bytes[6] = 1;
+        put_u16(&mut bytes, 0x10, 2);
+        put_u16(&mut bytes, 0x12, 3); // EM_386
+        put_u32(&mut bytes, 0x14, 1);
+        put_u16(&mut bytes, 0x28, 52);
+
+        Arc::from(bytes)
+    }
+
     fn minimal_pe32_plus() -> Arc<[u8]> {
         let mut bytes = vec![0_u8; 0x400];
         let pe_offset = 0x80;
@@ -526,6 +541,14 @@ mod tests {
         assert_eq!(image.bytes_at(Address(0x400000), 15), Some(&[0xc3][..]));
 
         Ok(())
+    }
+
+    #[test]
+    fn rejects_elf32_x86_before_import_slot_metadata_is_created() {
+        assert_eq!(
+            GoblinLoader.load(minimal_elf32_x86()).unwrap_err(),
+            LoadError::UnsupportedClass
+        );
     }
 
     #[test]

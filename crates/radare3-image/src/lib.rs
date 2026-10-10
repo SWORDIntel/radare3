@@ -484,6 +484,73 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsupported_elf32_absolute_indirect_import_thunk() {
+        // ELF32's FF 25 disp32 encodes an absolute slot address. The loader
+        // currently rejects ELF32, so that slot cannot be corroborated by
+        // loader metadata and must not be inferred here.
+        let image = BinaryImage::new(
+            Arc::from([0xff, 0x25, 0x00, 0x20, 0x00, 0x00]),
+            BinaryFormat::Elf,
+            Architecture::X86,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 6,
+                memory_size: 6,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0x2000)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        assert!(image.import_thunk_at(Address(0x1000)).is_none());
+    }
+
+    #[test]
+    fn rejects_rip_relative_import_thunk_slot_underflow() {
+        let image = BinaryImage::new(
+            Arc::from([0xff, 0x25, 0x00, 0x00, 0x00, 0x80]), // disp32 = i32::MIN
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0),
+            None,
+            vec![Segment {
+                name: "text".to_string(),
+                address: Address(0),
+                file_offset: 0,
+                file_size: 6,
+                memory_size: 6,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: true,
+                },
+            }],
+        )
+        .with_imports(vec![Import {
+            slot: Some(Address(0)),
+            library: Some("libc.so.6".to_string()),
+            name: "puts".to_string(),
+            ordinal: None,
+            kind: ImportKind::Function,
+        }]);
+
+        assert!(image.import_thunk_at(Address(0)).is_none());
+    }
+
+    #[test]
     fn resolves_import_by_slot() {
         let image = BinaryImage::new(
             Arc::from([0xc3_u8]),
