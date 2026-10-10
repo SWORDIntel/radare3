@@ -17,7 +17,11 @@ use radare3_image::{
 };
 use radare3_types::{Address, Architecture, BinaryFormat};
 
+pub mod fuzz;
+
 pub const LOADER_SEMANTICS_VERSION: &str = "goblin-0.10.7/radare3-loader-v4-elf-import-slots";
+
+pub const DEFAULT_MAX_LOADER_INPUT_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadError {
@@ -25,6 +29,7 @@ pub enum LoadError {
     UnsupportedFormat,
     UnsupportedClass,
     UnsupportedArchitecture(u16),
+    InputTooLarge { size: usize, limit: usize },
 }
 
 impl fmt::Display for LoadError {
@@ -37,6 +42,9 @@ impl fmt::Display for LoadError {
             }
             Self::UnsupportedArchitecture(machine) => {
                 write!(f, "unsupported machine type: 0x{machine:04x}")
+            }
+            Self::InputTooLarge { size, limit } => {
+                write!(f, "input size {size} bytes exceeds limit of {limit} bytes")
             }
         }
     }
@@ -57,6 +65,13 @@ pub struct GoblinLoader;
 
 impl Loader for GoblinLoader {
     fn load_data(&self, bytes: BinaryData) -> Result<BinaryImage, LoadError> {
+        if bytes.len() > DEFAULT_MAX_LOADER_INPUT_BYTES {
+            return Err(LoadError::InputTooLarge {
+                size: bytes.len(),
+                limit: DEFAULT_MAX_LOADER_INPUT_BYTES,
+            });
+        }
+
         let object = Object::parse(bytes.as_slice())
             .map_err(|error| LoadError::Malformed(error.to_string()))?;
 
@@ -79,12 +94,30 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
         machine => return Err(LoadError::UnsupportedArchitecture(machine)),
     };
 
-    let segments: Vec<Segment> = elf
+    let mut segments = Vec::new();
+    for (index, header) in elf
         .program_headers
         .iter()
         .enumerate()
         .filter(|(_, header)| header.p_type == PT_LOAD)
-        .map(|(index, header)| Segment {
+    {
+        if header.p_vaddr.checked_add(header.p_filesz).is_none() {
+            return Err(LoadError::Malformed(
+                "ELF program segment virtual file range overflows address space".to_string(),
+            ));
+        }
+        if header.p_vaddr.checked_add(header.p_memsz).is_none() {
+            return Err(LoadError::Malformed(
+                "ELF program segment virtual memory range overflows address space".to_string(),
+            ));
+        }
+        if header.p_offset.checked_add(header.p_filesz).is_none() {
+            return Err(LoadError::Malformed(
+                "ELF program segment file offset range overflows address space".to_string(),
+            ));
+        }
+
+        segments.push(Segment {
             name: format!("LOAD{index}"),
             address: Address(header.p_vaddr),
             file_offset: header.p_offset,
@@ -95,8 +128,8 @@ fn load_elf(bytes: BinaryData, elf: &goblin::elf::Elf<'_>) -> Result<BinaryImage
                 write: header.is_write(),
                 execute: header.is_executable(),
             },
-        })
-        .collect();
+        });
+    }
 
     if segments.is_empty() {
         return Err(LoadError::Malformed(
@@ -277,35 +310,62 @@ fn load_pe(bytes: BinaryData, pe: &goblin::pe::PE<'_>) -> Result<BinaryImage, Lo
         machine => return Err(LoadError::UnsupportedArchitecture(machine)),
     };
 
-    let segments: Vec<Segment> = pe
-        .sections
-        .iter()
-        .enumerate()
-        .map(|(index, section)| {
-            let name = section
-                .name()
-                .map(str::to_owned)
-                .unwrap_or_else(|_| format!("section{index}"));
-            let memory_size = if section.virtual_size == 0 {
-                u64::from(section.size_of_raw_data)
-            } else {
-                u64::from(section.virtual_size)
-            };
+    let mut segments = Vec::with_capacity(pe.sections.len());
+    for (index, section) in pe.sections.iter().enumerate() {
+        let name = section
+            .name()
+            .map(str::to_owned)
+            .unwrap_or_else(|_| format!("section{index}"));
+        let memory_size = if section.virtual_size == 0 {
+            u64::from(section.size_of_raw_data)
+        } else {
+            u64::from(section.virtual_size)
+        };
 
-            Segment {
-                name,
-                address: Address(pe.image_base + u64::from(section.virtual_address)),
-                file_offset: u64::from(section.pointer_to_raw_data),
-                file_size: u64::from(section.size_of_raw_data),
-                memory_size,
-                permissions: Permissions {
-                    read: section.characteristics & IMAGE_SCN_MEM_READ != 0,
-                    write: section.characteristics & IMAGE_SCN_MEM_WRITE != 0,
-                    execute: section.characteristics & IMAGE_SCN_MEM_EXECUTE != 0,
-                },
-            }
-        })
-        .collect();
+        let Some(virtual_address) = pe
+            .image_base
+            .checked_add(u64::from(section.virtual_address))
+        else {
+            return Err(LoadError::Malformed(
+                "PE section virtual address overflows address space".to_string(),
+            ));
+        };
+
+        if virtual_address
+            .checked_add(u64::from(section.size_of_raw_data))
+            .is_none()
+        {
+            return Err(LoadError::Malformed(
+                "PE section raw data virtual range overflows address space".to_string(),
+            ));
+        }
+        if virtual_address.checked_add(memory_size).is_none() {
+            return Err(LoadError::Malformed(
+                "PE section memory virtual range overflows address space".to_string(),
+            ));
+        }
+        if u64::from(section.pointer_to_raw_data)
+            .checked_add(u64::from(section.size_of_raw_data))
+            .is_none()
+        {
+            return Err(LoadError::Malformed(
+                "PE section file offset range overflows address space".to_string(),
+            ));
+        }
+
+        segments.push(Segment {
+            name,
+            address: Address(virtual_address),
+            file_offset: u64::from(section.pointer_to_raw_data),
+            file_size: u64::from(section.size_of_raw_data),
+            memory_size,
+            permissions: Permissions {
+                read: section.characteristics & IMAGE_SCN_MEM_READ != 0,
+                write: section.characteristics & IMAGE_SCN_MEM_WRITE != 0,
+                execute: section.characteristics & IMAGE_SCN_MEM_EXECUTE != 0,
+            },
+        });
+    }
 
     if segments.is_empty() {
         return Err(LoadError::Malformed("PE contains no sections".to_string()));
@@ -546,8 +606,8 @@ mod tests {
     #[test]
     fn rejects_elf32_x86_before_import_slot_metadata_is_created() {
         assert_eq!(
-            GoblinLoader.load(minimal_elf32_x86()).unwrap_err(),
-            LoadError::UnsupportedClass
+            GoblinLoader.load(minimal_elf32_x86()).as_ref().err(),
+            Some(&LoadError::UnsupportedClass)
         );
     }
 
