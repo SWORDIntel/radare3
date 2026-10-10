@@ -1,4 +1,17 @@
-schema = 1
+schema = 2
+
+# Reproducible source-built benchmark corpus.
+#
+# Every target is compiled from a committed fixture by a locally installed
+# toolchain; nothing is downloaded and no third-party corpus is imported.
+# Each `recipe` runs from the repository root with TARGET_OUT set to the
+# target's path inside [defaults].output_dir. Targets marked
+# `optional = true` are skipped with a note when a `requires` command is
+# absent; non-optional targets fail the build instead.
+#
+# Flags keep builds reproducible on a given toolchain: -g0/-s/-trimpath keep
+# host paths out of the artifacts, and linker build-ids stay content-derived.
+# Rebuild twice and compare the recorded SHA-256 digests to verify.
 
 [defaults]
 output_dir = ".radare3/corpus"
@@ -6,10 +19,67 @@ search_hex = "524144415245335f5345415243485f4d41524b4552"
 
 [[target]]
 name = "r3bench-o0"
+language = "c"
+format = "elf"
 source = "benchmarks/fixtures/r3bench.c"
-recipe = "cc -std=c11 -O0 -g0 -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o .radare3/corpus/r3bench-o0"
+recipe = 'cc -std=c11 -O0 -g0 -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o "$TARGET_OUT"'
+requires = ["cc"]
 
 [[target]]
 name = "r3bench-o2"
+language = "c"
+format = "elf"
 source = "benchmarks/fixtures/r3bench.c"
-recipe = "cc -std=c11 -O2 -g0 -s -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o .radare3/corpus/r3bench-o2"
+recipe = 'cc -std=c11 -O2 -g0 -s -fno-pie -no-pie benchmarks/fixtures/r3bench.c -o "$TARGET_OUT"'
+requires = ["cc"]
+
+[[target]]
+name = "r3bench-pie"
+language = "c"
+format = "elf"
+source = "benchmarks/fixtures/r3bench.c"
+recipe = 'cc -std=c11 -O2 -g0 -fPIE -pie benchmarks/fixtures/r3bench.c -o "$TARGET_OUT"'
+requires = ["cc"]
+
+[[target]]
+name = "r3bench-cpp"
+language = "c++"
+format = "elf"
+source = "benchmarks/fixtures/r3bench.cpp"
+recipe = 'c++ -std=c++17 -O2 -g0 benchmarks/fixtures/r3bench.cpp -o "$TARGET_OUT"'
+requires = ["c++"]
+
+[[target]]
+name = "r3bench-rs"
+language = "rust"
+format = "elf"
+source = "benchmarks/fixtures/r3bench.rs"
+recipe = 'rustc --edition 2021 -C opt-level=2 -C debuginfo=0 benchmarks/fixtures/r3bench.rs -o "$TARGET_OUT"'
+requires = ["rustc"]
+
+[[target]]
+name = "r3bench-go"
+language = "go"
+format = "elf"
+source = "benchmarks/fixtures/r3bench.go"
+recipe = 'go build -trimpath -ldflags="-s -w" -o "$TARGET_OUT" benchmarks/fixtures/r3bench.go'
+requires = ["go"]
+optional = true
+
+[[target]]
+name = "r3bench-pe-o0.exe"
+language = "c"
+format = "pe"
+source = "benchmarks/fixtures/r3bench.c"
+recipe = 'x86_64-w64-mingw32-gcc -std=c11 -O0 -g0 -Wl,--no-insert-timestamp benchmarks/fixtures/r3bench.c -o "$TARGET_OUT"'
+requires = ["x86_64-w64-mingw32-gcc"]
+optional = true
+
+[[target]]
+name = "r3bench-pe-o2.exe"
+language = "c"
+format = "pe"
+source = "benchmarks/fixtures/r3bench.c"
+recipe = 'x86_64-w64-mingw32-gcc -std=c11 -O2 -g0 -s -Wl,--no-insert-timestamp benchmarks/fixtures/r3bench.c -o "$TARGET_OUT"'
+requires = ["x86_64-w64-mingw32-gcc"]
+optional = true

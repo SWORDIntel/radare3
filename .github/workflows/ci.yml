@@ -128,7 +128,7 @@ jobs:
           bash -n scripts/bench-session.sh
           bash -n scripts/bench-session-queries.sh
           bash -n scripts/bench-resources.sh
-          python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py scripts/summarize-benchmark-campaign.py
+          python3 -m py_compile scripts/machine-manifest.py scripts/benchmark-metadata.py scripts/check-benchmark-regression.py scripts/summarize-benchmark-campaign.py scripts/build-corpus.py scripts/bench-baremetal.py
       - name: Benchmark scaling summary self-test
         run: |
           python3 scripts/summarize-benchmark-campaign.py benchmarks/testdata/campaign             --output /tmp/r3-campaign-summary.json             --tsv /tmp/r3-campaign-summary.tsv

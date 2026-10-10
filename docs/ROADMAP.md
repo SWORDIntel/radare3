@@ -66,7 +66,8 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] session reuse benchmark
 - [x] repeated function/xref session-query benchmark
 - [x] profiling helper scripts
-- [ ] realistic multi-language ELF/PE corpus recipes
+- [x] realistic multi-language ELF/PE corpus recipes
+- [x] portable bare-metal benchmark runner
 - [ ] committed bare-metal baseline
 - [ ] representative perf/flamegraph/heap profiles
 - [x] RSS/minor-fault/major-fault resource benchmark harness
@@ -123,7 +124,8 @@ This is the compact implementation-status view. The full engineering plan, relea
 - [x] cache hostile-input bounds checks before allocation
 - [ ] max-memory governance
 - [ ] wall-clock timeout governance
-- [ ] fuzz targets for loader / CFG / cache / compatibility parsing
+- [x] loader ELF/PE hostile-input bounds and fuzz/property harness
+- [ ] fuzz targets for CFG / cache / compatibility parsing
 - [ ] large-binary stress corpus
 
 ## Phase 8 — Deep analysis and architecture expansion

@@ -9,3 +9,4 @@ perf.data.old
 flamegraph.svg
 .r2fast/
 .radare3/
+__pycache__/

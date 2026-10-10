@@ -24,12 +24,40 @@ The repository includes source, not generated binaries:
 ./scripts/build-benchmark-corpus.sh
 ```
 
-This builds:
+The wrapper runs `scripts/build-corpus.py`, which executes the `[[target]]`
+recipes in `benchmarks/corpus.toml` (schema 2). Each recipe runs from the
+repository root with `TARGET_OUT` set inside `.radare3/corpus/`. Nothing is
+downloaded; every binary comes from a committed fixture under
+`benchmarks/fixtures/`.
 
-- `.radare3/corpus/r3bench-o0`
-- `.radare3/corpus/r3bench-o2`
+Current recipe matrix:
 
-The recipes and search marker are recorded in `benchmarks/corpus.toml`. Generated corpus binaries remain ignored.
+| Target | Language | Format | Notes |
+|--------|----------|--------|-------|
+| `r3bench-o0` | C | ELF (ET_EXEC) | `-O0`, unstripped |
+| `r3bench-o2` | C | ELF (ET_EXEC) | `-O2 -s`, stripped |
+| `r3bench-pie` | C | ELF (ET_DYN) | `-O2 -fPIE -pie` |
+| `r3bench-cpp` | C++17 | ELF | exceptions, virtual dispatch, unstripped |
+| `r3bench-rs` | Rust | ELF | `rustc -C opt-level=2`, unstripped |
+| `r3bench-go` | Go | ELF | static, `-trimpath -s -w`; optional (`go`) |
+| `r3bench-pe-o0.exe` | C | PE32+ | `-O0`, unstripped; optional (mingw-w64) |
+| `r3bench-pe-o2.exe` | C | PE32+ | `-O2 -s`; optional (mingw-w64) |
+
+Optional targets are skipped with a note when their `requires` toolchain is
+absent, so the corpus still builds on minimal machines. The build writes
+`.radare3/corpus/manifest.json` with each target's size and SHA-256; the
+manifest carries no timestamps, so a byte-identical manifest across two
+builds confirms toolchain determinism:
+
+```sh
+./scripts/build-benchmark-corpus.sh >/dev/null
+sha256sum .radare3/corpus/manifest.json
+./scripts/build-benchmark-corpus.sh >/dev/null
+sha256sum .radare3/corpus/manifest.json   # identical digest expected
+```
+
+The search marker is recorded in `benchmarks/corpus.toml`. Generated corpus
+binaries and the manifest remain ignored.
 
 ## Stored results
 
@@ -56,6 +84,49 @@ RUNS=10 RAYON_NUM_THREADS=8 ./scripts/bench-resources.sh
 The resource benchmark uses GNU `/usr/bin/time` and stores raw per-run TSV samples for radare3 parallel, radare3 sequential, and radare2 analysis. Each sample records elapsed/user/system time, maximum RSS, minor and major page faults, and voluntary/involuntary context switches. It verifies radare3 structural equivalence before measuring.
 
 To preserve a significant run, copy the JSON and metadata into `benchmarks/results/<machine>/` in a dedicated benchmark commit.
+
+## Bare-metal runner
+
+`scripts/bench-baremetal.py` is the portable whole-corpus runner. It needs
+only Python 3 and the built `radare3` binary — no hyperfine, radare2, or
+GNU time — so it runs on machines where the comparison stack is missing.
+Per-run wall/user/system time, maximum RSS, and minor/major page faults are
+captured with `wait4(2)` rusage; where `wait4` is unavailable only wall time
+is recorded.
+
+```sh
+cargo build --release -p radare3-cli
+python3 scripts/bench-baremetal.py --runs 10 --warmup 3 --threads 8
+```
+
+Useful variations:
+
+```sh
+# sequential scheduler workload
+python3 scripts/bench-baremetal.py --workload analysis-sequential
+
+# subset of the corpus, report to stdout
+python3 scripts/bench-baremetal.py --target r3bench-rs --out -
+
+# preserve a candidate report for review
+python3 scripts/bench-baremetal.py \
+  --out benchmarks/results/<machine>/candidate-baremetal-$(date -u +%Y%m%dT%H%M%SZ).json
+```
+
+Each report (`radare3.baremetal.v1`) records host identity (machine
+manifest), build identity (radare3 SHA-256, git commit and dirty flag,
+rustc), workload identity (per-target SHA-256/size/format/architecture,
+runs, warmup, `RAYON_NUM_THREADS`, corpus manifest SHA-256), all raw
+samples, medians, and throughput (`target_size_bytes / median_wall_seconds`).
+The same structural gates as the hyperfine harness apply: `radare3 verify`
+and the parallel/sequential function-count check must pass before timing.
+
+Default output lands in `.radare3/baremetal/` and stays ignored. A report is
+a **single-host record**: absolute numbers are not comparable across
+machines and must never be used to rank hosts — re-measure each
+configuration. Only a report written explicitly under
+`benchmarks/results/<machine>/` may be committed, after the baseline
+checklist in `benchmarks/BASELINE.md`.
 
 ## Regression gate
 

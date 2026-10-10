@@ -28,6 +28,19 @@ For a profile of the representative O2 target:
 RAYON_NUM_THREADS=<physical-or-logical-count> ./scripts/profile-analysis.sh
 ```
 
+A lighter single-host record is available when the full hyperfine/radare2
+stack is unnecessary or unavailable:
+
+```sh
+python3 scripts/bench-baremetal.py --runs 20 --warmup 3 --threads <count> \
+  --out benchmarks/results/<machine>/candidate-baremetal-<ts>.json
+```
+
+It measures the whole `benchmarks/corpus.toml` corpus (ELF and PE, multiple
+languages) and records host/build/workload identity, wall time, RSS, page
+faults, and throughput in one `radare3.baremetal.v1` report. It is a
+single-host record — not a cross-machine comparison.
+
 Preserve a chosen baseline under `benchmarks/results/<machine>/` only after checking:
 
 - CPU governor is appropriate and stable.
