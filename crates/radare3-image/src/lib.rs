@@ -428,6 +428,47 @@ mod tests {
         assert_eq!(resolved.slot, Address(0x2000));
         assert_eq!(resolved.import.name, "puts");
 
+        // The decoder must not infer an import from bytes unless they belong
+        // to an executable, file-backed region in the supported format.
+        let non_executable = BinaryImage::new(
+            Arc::from(image.bytes().to_vec()),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            vec![Segment {
+                name: "data".to_string(),
+                address: Address(0x1000),
+                file_offset: 0,
+                file_size: 6,
+                memory_size: 6,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: false,
+                },
+            }],
+        )
+        .with_imports(image.imports.clone());
+        assert!(non_executable.import_thunk_at(Address(0x1000)).is_none());
+
+        // PE loader imports currently lack a reliable function-vs-data
+        // classification, so an identical byte pattern is not normalized.
+        let unsupported_format = BinaryImage::new(
+            Arc::from(image.bytes().to_vec()),
+            BinaryFormat::Pe,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            image.segments.clone(),
+        )
+        .with_imports(image.imports.clone());
+        assert!(
+            unsupported_format
+                .import_thunk_at(Address(0x1000))
+                .is_none()
+        );
+
         let mut near_miss_bytes = image.bytes().to_vec();
         near_miss_bytes[1] = 0x24; // SIB form, not RIP-relative ModRM rm=101.
         let near_miss = BinaryImage::new(

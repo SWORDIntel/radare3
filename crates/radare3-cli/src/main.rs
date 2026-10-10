@@ -2430,10 +2430,34 @@ mod import_thunk_tests {
         }]);
 
         let annotation = normalized_import_thunk_json(&image, Address(0x1000));
-        assert_eq!(annotation["entry"], 0x1000);
-        assert_eq!(annotation["slot"], 0x2000);
-        assert_eq!(annotation["import"]["library"], "libc.so.6");
-        assert_eq!(annotation["import"]["name"], "puts");
+        assert_eq!(
+            annotation,
+            serde_json::json!({
+                "entry": 0x1000,
+                "slot": 0x2000,
+                "import": {
+                    "library": "libc.so.6",
+                    "name": "puts",
+                    "kind": "function",
+                },
+            })
+        );
+
+        // Normalization is annotation-only and remains absent for unsupported
+        // formats; callers retain the original xref address independently.
+        let pe_image = BinaryImage::new(
+            Arc::from(image.bytes().to_vec()),
+            BinaryFormat::Pe,
+            Architecture::X86_64,
+            Address(0x1000),
+            None,
+            image.segments.clone(),
+        )
+        .with_imports(image.imports.clone());
+        assert_eq!(
+            normalized_import_thunk_json(&pe_image, Address(0x1000)),
+            serde_json::Value::Null
+        );
     }
 }
 
