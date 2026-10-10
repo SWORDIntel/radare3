@@ -6,7 +6,9 @@ use radare3::analysis::{
     AnalysisOptions, AnalysisResult, Analyzer, ParallelAnalyzer, RecursiveAnalyzer,
 };
 use radare3::arch::Decoder;
-use radare3::arch_x86::{DECODER_SEMANTICS_VERSION, IcedX86Decoder};
+use radare3::arch_x86::{
+    CanonicalMapping, DECODER_SEMANTICS_VERSION, IcedX86Decoder, IcedX86HandoffV1,
+};
 use radare3::cache::{
     AnalysisCache, AnalysisSnapshot, CacheError, CacheIdentity, CacheKey, FileCache,
     analysis_options_fingerprint,
@@ -437,6 +439,9 @@ fn decode_evidence_json(
     let observation = decoder
         .observe(address, &input_bytes)
         .map_err(|error| format!("decode failed: {error:?}"))?;
+    let handoff = decoder
+        .observe_handoff_v1(address, &input_bytes)
+        .map_err(|error| format!("decode failed: {error:?}"))?;
     let bytes_to_hex = |bytes: &[u8]| {
         bytes
             .iter()
@@ -478,7 +483,35 @@ fn decode_evidence_json(
         "canonical_isanity_id": observation.canonical_isanity_id,
         "identity_scope": "provider-version-specific; not canonical",
         "isanity_observation": isan_observation,
+        "handoff": iced_x86_handoff_json(&handoff),
     }))
+}
+
+/// Serialize the typed `IcedX86HandoffV1` record for the decode-evidence CLI.
+/// The provider-scoped Code identity is reported verbatim; the canonical
+/// mapping stays explicitly unresolved and no ISANITY ID is ever synthesized.
+fn iced_x86_handoff_json(handoff: &IcedX86HandoffV1) -> serde_json::Value {
+    let canonical_mapping = match &handoff.canonical_mapping {
+        CanonicalMapping::Unresolved { reason } => serde_json::json!({
+            "status": "unresolved",
+            "reason": reason,
+        }),
+    };
+
+    serde_json::json!({
+        "schema": handoff.schema,
+        "provider": handoff.provider,
+        "provider_version": handoff.provider_version,
+        "architecture": handoff.architecture,
+        "execution_mode": handoff.execution_mode,
+        "input_bytes_hex": hex_bytes(&handoff.input_bytes),
+        "consumed_bytes_hex": hex_bytes(&handoff.consumed_bytes),
+        "consumed_length": handoff.consumed_bytes.len(),
+        "source_namespace": handoff.source_namespace,
+        "source_name": handoff.source_name,
+        "source_numeric_value": handoff.source_numeric_value,
+        "canonical_mapping": canonical_mapping,
+    })
 }
 
 fn analyze_parallel(
@@ -2467,6 +2500,99 @@ mod decode_evidence_tests {
         assert_eq!(
             decode_evidence_json("64", "0x0", "zz").err().as_deref(),
             Some("invalid hex byte zz: invalid digit found in string")
+        );
+    }
+
+    #[test]
+    fn embeds_versioned_handoff_record_alongside_legacy_fields() -> Result<(), String> {
+        let json = decode_evidence_json("64", "0x401000", "48 89 e5 90")?;
+
+        // Every pre-existing top-level field stays unchanged.
+        assert_eq!(json["schema"], "radare3.iced-x86.decode-observation.v1");
+        assert_eq!(json["provider"], "iced-x86");
+        assert_eq!(json["decoder_version"], "1.21.0");
+        assert_eq!(json["mode_bits"], 64);
+        assert_eq!(json["address"], "0x401000");
+        assert_eq!(json["input_bytes_hex"], "4889e590");
+        assert_eq!(json["decoded_bytes_hex"], "4889e5");
+        assert_eq!(json["decoded_length"], 3);
+        assert_eq!(json["code_name"], "Mov_rm64_r64");
+        assert_eq!(json["code_discriminant"], 282);
+        assert!(json["canonical_isanity_id"].is_null());
+        assert_eq!(
+            json["identity_scope"],
+            "provider-version-specific; not canonical"
+        );
+        assert_isanity_decode_observation_v1(&json["isanity_observation"]);
+
+        assert_eq!(
+            json["handoff"],
+            serde_json::json!({
+                "schema": "radare3.iced-x86.decode-handoff.v1",
+                "provider": "iced-x86",
+                "provider_version": "1.21.0",
+                "architecture": "x86",
+                "execution_mode": "64-bit",
+                "input_bytes_hex": "4889e590",
+                "consumed_bytes_hex": "4889e5",
+                "consumed_length": 3,
+                "source_namespace": "iced-x86::Code",
+                "source_name": "Mov_rm64_r64",
+                "source_numeric_value": 282,
+                "canonical_mapping": {
+                    "status": "unresolved",
+                    "reason": "no ratified ISANITY catalogue mapping is available",
+                },
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_serialization_is_deterministic() -> Result<(), String> {
+        let first = decode_evidence_json("64", "0x401000", "48 89 e5 90")?;
+        let second = decode_evidence_json("64", "0x401000", "48 89 e5 90")?;
+        assert_eq!(first, second);
+        let first = serde_json::to_string(&first).map_err(|error| error.to_string())?;
+        let second = serde_json::to_string(&second).map_err(|error| error.to_string())?;
+        assert_eq!(first, second);
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_reports_submitted_mode_and_exact_consumed_bytes() -> Result<(), String> {
+        let json = decode_evidence_json("32", "0x401000", "89 e5 90")?;
+        let handoff = &json["handoff"];
+        assert_eq!(handoff["architecture"], "x86");
+        assert_eq!(handoff["execution_mode"], "32-bit");
+        assert_eq!(handoff["input_bytes_hex"], "89e590");
+        assert_eq!(handoff["consumed_bytes_hex"], "89e5");
+        assert_eq!(handoff["consumed_length"], 2);
+        assert_eq!(handoff["source_namespace"], "iced-x86::Code");
+        assert_eq!(handoff["source_name"], "Mov_rm32_r32");
+        assert!(handoff["source_numeric_value"].is_u64());
+        assert_eq!(handoff["canonical_mapping"]["status"], "unresolved");
+        assert!(
+            handoff["canonical_mapping"]["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_path_preserves_existing_error_behavior() {
+        assert_eq!(
+            decode_evidence_json("16", "0x0", "90").err().as_deref(),
+            Some("decode-evidence mode must be 32 or 64")
+        );
+        assert_eq!(
+            decode_evidence_json("64", "0x0", "").err().as_deref(),
+            Some("decode failed: InsufficientBytes")
+        );
+        assert_eq!(
+            decode_evidence_json("64", "0x0", "0f").err().as_deref(),
+            Some("decode failed: InvalidInstruction")
         );
     }
 }
